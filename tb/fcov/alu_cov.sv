@@ -88,12 +88,20 @@ class alu_cov extends uvm_subscriber #(alu_txn);
     }
     // For LSU-address ops only: how long EX waited for the data side.
     cp_lsu_stall : coverpoint stall_cycles iff (lsu_en) { bins none = {0}; bins gnt_wait = {[1:$]}; }
+    `ifdef VERILATOR
+    x_lsu_stall : cross cp_lsu, cp_lsu_stall;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_lsu_stall : cross cp_lsu, cp_lsu_stall { ignore_bins no_lsu = x_lsu_stall with (cp_lsu == 2'b00); }
+    `endif
+    `ifdef VERILATOR
+    x_op_we : cross cp_op, cp_we;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_op_we : cross cp_op, cp_we {
       // Branch/LSU ops never write through the ALU port (we must be 0);
       // that combo is dropped as impossible.
       ignore_bins branch_we = x_op_we with (cp_op inside {ALU_EQ, ALU_NE, ALU_LTS, ALU_GES, ALU_LTU, ALU_GEU} && cp_we);
     }
+    `endif
   endgroup
 
   // GROUP 2: operand classes for every SINGLE-CYCLE op class (vplan risc_alu_*)
@@ -109,10 +117,14 @@ class alu_cov extends uvm_subscriber #(alu_txn);
     x_cls_a    : cross cp_cls, cp_a;
     x_cls_b    : cross cp_cls, cp_b;
     x_cls_sign : cross cp_cls, cp_a_neg, cp_b_neg;  // sign corners per class
+    `ifdef VERILATOR
+    x_slt_eq   : cross cp_cls, cp_eq;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_slt_eq   : cross cp_cls, cp_eq {
       // a==b only matters for SLT and branch classes -> drop the rest
       ignore_bins not_cmp = x_slt_eq with (!(cp_cls inside {ALU_CLS_SLT, ALU_CLS_BRANCH}));
     }
+    `endif
   endgroup
 
   // GROUP 3: shifts - amount corners x source MSB (vplan risc_alu_shift)
@@ -151,10 +163,14 @@ class alu_cov extends uvm_subscriber #(alu_txn);
     x_op_dividend : cross cp_op, cp_dividend;
     x_op_divisor  : cross cp_op, cp_divisor;
     x_op_zero     : cross cp_op, cp_zero;
+    `ifdef VERILATOR
+    x_op_ovf      : cross cp_op, cp_ovf;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_op_ovf      : cross cp_op, cp_ovf {
       // overflow only exists for signed ops -> drop DIVU/REMU combinations
       ignore_bins unsigned_ops = x_op_ovf with (cp_op inside {ALU_DIVU, ALU_REMU} && cp_ovf);
     }
+    `endif
     x_op_sign     : cross cp_op, cp_sign;
   endgroup
 
@@ -183,13 +199,21 @@ class alu_cov extends uvm_subscriber #(alu_txn);
     cp_cur_cls  : coverpoint cls;            // class of the current op
     cp_gap      : coverpoint gap { bins b2b = {1}; bins two = {2}; bins three_plus = {[3:$]}; }
     cp_raw      : coverpoint raw_prev;       // current reads prev's rd (RAW)
+    `ifdef VERILATOR
+    x_div_then     : cross cp_prev_div, cp_cur_cls, cp_gap;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_div_then     : cross cp_prev_div, cp_cur_cls, cp_gap {
       // keep only rows where the previous op really was a divider op
       ignore_bins not_after_div = x_div_then with (!cp_prev_div);
     }
+    `endif
+    `ifdef VERILATOR
+    x_div_then_raw : cross cp_prev_div, cp_raw, cp_gap;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_div_then_raw : cross cp_prev_div, cp_raw, cp_gap  {
       ignore_bins not_after_div = x_div_then_raw with (!cp_prev_div);
     }
+    `endif
   endgroup
 
   // GROUP 8: RESET while an op is in EX - which cycle? (vplan risc_rst_02)
@@ -201,10 +225,14 @@ class alu_cov extends uvm_subscriber #(alu_txn);
       bins divide = {[2:34]};   // middle of the divider
       bins finish = {[35:$]};   // last divider cycle / stall
     }
+    `ifdef VERILATOR
+    x_cls_stage : cross cp_cls, cp_stage;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_cls_stage : cross cp_cls, cp_stage {
       // single-cycle ops only exist at stage 1 -> drop "late" combos
       ignore_bins single_late = x_cls_stage with (cp_cls != ALU_CLS_DIV && cp_stage != 1);
     }
+    `endif
   endgroup
 
   function new(string name, uvm_component parent);

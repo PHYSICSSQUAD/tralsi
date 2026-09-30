@@ -62,6 +62,9 @@ class mul_cov extends uvm_subscriber #(mul_txn);
     x_op_a     : cross cp_op, cp_a;          // every op x every A class
     x_op_b     : cross cp_op, cp_b;          // every op x every B class
     x_op_sign  : cross cp_op, cp_a_neg, cp_b_neg;  // 4 sign cells per op
+    `ifdef VERILATOR
+    x_op_corners: cross cp_op, cp_a, cp_b;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_op_corners: cross cp_op, cp_a, cp_b {
       // Keep only EXACT corner values on both sides. Without this the cross
       // would explode (12 x 12 bins per op) because the range classes are
@@ -69,6 +72,7 @@ class mul_cov extends uvm_subscriber #(mul_txn);
       ignore_bins ranges = x_op_corners with (cp_a inside {OPC_POS_SMALL, OPC_POS_LARGE, OPC_NEG_SMALL, OPC_NEG_LARGE, OPC_POW2} ||
                                               cp_b inside {OPC_POS_SMALL, OPC_POS_LARGE, OPC_NEG_SMALL, OPC_NEG_LARGE, OPC_POW2});
     }
+    `endif
   endgroup
 
   // ---- 2. result classes --------------------------------------------------------
@@ -81,13 +85,25 @@ class mul_cov extends uvm_subscriber #(mul_txn);
     cp_res_msb : coverpoint res_msb;    // result has MSB set (negative signed)?
     cp_sov     : coverpoint sov;        // signed product > 32 bits (MUL truncated it)
     cp_uov     : coverpoint uov;        // unsigned product > 32 bits
+    `ifdef VERILATOR
+    x_op_res   : cross cp_op, cp_res_zero, cp_res_ones, cp_res_msb;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_op_res   : cross cp_op, cp_res_zero, cp_res_ones, cp_res_msb {
       // A result cannot be zero AND all-ones at the same time -> drop that combo
       ignore_bins impossible = x_op_res with (cp_res_zero && (cp_res_ones || cp_res_msb));
     }
+    `endif
     // Signed/unsigned overflow only makes sense for MUL (MULH* return the high word)
+    `ifdef VERILATOR
+    x_mul_sov  : cross cp_op, cp_sov;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_mul_sov  : cross cp_op, cp_sov { ignore_bins not_mul = x_mul_sov with (cp_op != MUL); }
+    `endif
+    `ifdef VERILATOR
+    x_mul_uov  : cross cp_op, cp_uov;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_mul_uov  : cross cp_op, cp_uov { ignore_bins not_mul = x_mul_uov with (cp_op != MUL); }
+    `endif
   endgroup
 
   // ---- 3. latency x external stall --------------------------------------------
@@ -131,10 +147,14 @@ class mul_cov extends uvm_subscriber #(mul_txn);
     cp_raw  : coverpoint raw_prev;    // does the current op read prev's rd? (RAW hazard)
     x_prev_cur : cross cp_prev, cp_cur;              // every pair of ops in sequence
     x_b2b      : cross cp_prev, cp_cur, cp_gap;      // pairs at each distance
+    `ifdef VERILATOR
+    x_dep_gap  : cross cp_cur, cp_raw, cp_gap;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_dep_gap  : cross cp_cur, cp_raw, cp_gap {
       // a non-dependent op at distance 3 is uninteresting -> drop it
       ignore_bins no_dep_far = x_dep_gap with (!cp_raw && cp_gap == 3);
     }
+    `endif
   endgroup
 
   // ---- 6. reset while in EX --------------------------------------------------
@@ -147,10 +167,14 @@ class mul_cov extends uvm_subscriber #(mul_txn);
       bins step   = {[2:4]};      // MULH STEP0..STEP2
       bins finish = {[5:$]};      // FINISH held by an external stall
     }
+    `ifdef VERILATOR
+    x_op_stage : cross cp_op, cp_stage;   // covergroups unsupported on this tool (COVERIGN): keep plain cross, no select
+    `else
     x_op_stage : cross cp_op, cp_stage {
       // MUL only ever lasts 1 cycle, so MUL + late stage is impossible
       ignore_bins mul_late = x_op_stage with (cp_op == MUL && cp_stage != 1);
     }
+    `endif
   endgroup
 
   // Constructor: build all 6 covergroups (covergroups are classes too).

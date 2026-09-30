@@ -256,3 +256,52 @@ Smoke commands: `tb/scripts/run_smoke.sh [+dgw=N +drw=N +igw=N +irw=N] [+reset_a
 `GEN=<blocks> SEEDS="1 2 3" tb/scripts/run_smoke.sh [+dgw=..]` (random programs), `REBUILD=1` after RTL/TB edits.
 Tooling: after a sandbox restart run `tb/scripts/setup_tools.sh` (pyslang, Verilator, uvm-core) and rebuild with `REBUILD=1`.
 Directory naming: functional coverage lives in `tb/fcov/` - a directory named `coverage` is not persisted by the workspace.
+
+## 5. Post-delivery validation (2026-09-30)
+
+| item | status | evidence |
+|---|---|---|
+| plan audit (steps 1-9) | all done | §4; zero TODO/FIXME/TBD in `tb/`; sole gap was the selftest not wired to a script -> closed below |
+| compile checks | 5/5 pass | full slang UVM stack, smoke-UVM top, 2 binds + sva, mini-env slang (`--timescale 1ns/1ps`), all 0 errors |
+| logic review | 1 bug found+fixed | `alu_mul_scoreboard.sv` build_phase was missing `alu_imp = new(...)`; post-fix re-checks PASS |
+| reference selftest wired | done | `tb/scripts/run_selftest.sh` (Verilator, PASS = 60 vectors) |
+| **mini UVM environment** | done | `tb/mini/{mini_dut.sv,mini_tb.sv}` + `tb/scripts/{mini_uvm.f,run_mini_uvm.sh}` - see below |
+
+### 5.1 Mini UVM environment (validate the TB on a free tool BEFORE integrating the big RTL)
+
+`tb/mini/` runs the REAL UVM stack (mul_smoke_test -> mul_agent + alu_agent + alu_mul_scoreboard +
+mul_cov + alu_cov, connected exactly like the team env) against a small behavioural core instead of
+`cv32e40p`:
+
+* `mini_dut.sv` drives `alu_mul_if` (negedge-driven, so the `mon_cb @(posedge)` `input #1step` sampling
+  is race-free) through a directed scenario covering: MUL/MULH/MULHU/MULHSU (1/5 cycles), external
+  stalls, DIV/REM latency corners (3, 32, 34, 35), branches incl. one leaving with `ex_valid=0`,
+  LUI/AUIPC/JAL/JALR operand conventions, aligned + misaligned ld/st (2-pass shape), RTL-style bubbles,
+  and reset-kills mid-DIV/MULH. Results are computed with native SV operators (independent of the ref
+  packages); DIV timing follows `div_latency_ref` (the documented RTL model).
+* `mini_tb.sv` publishes the vif under the SAME config_db key (`"alu_mul_vif"`), starts
+  `run_test("mul_smoke_test")` and triggers the global `smoke_done` event when the scenario ends
+  (same end-of-test contract as `tb_smoke`: fail unless txns>0 on both sides and 0 errors).
+* Run: `tb/scripts/run_mini_uvm.sh` (SIM=verilator default; SIM=questa|vcs|xcelium command lines
+  provided in the script header for machines with those tools). PASS/FAIL is parsed from the UVM
+  report, not the process exit code. slang elaboration: `run_mini_uvm.sh` file list via
+  `slang_check.py ... -f tb/scripts/mini_uvm.f --top mini_tb --timescale 1ns/1ps`.
+* Tool notes: built with `+define+UVM_NO_DPI` (pure-SV glob matching — no DPI C anywhere), so the
+  same file list works on any IEEE-1800 tool with a UVM library. Verilator parses but does not
+  implement covergroups (`COVERIGN`, coverage % = 0 there) and its parser rejects `with (...)`
+  cross-selects — the 13 `ignore_bins ... with` statements in `tb/fcov/*` are therefore wrapped in
+  `` `ifdef VERILATOR `` (plain cross kept; full syntax unchanged for every other tool).
+* **First full run (2026-09-30): PASS.** build ≈ 4 min (generate 10 s + group split + serial make),
+  simulation 0.05 s: MUL side 8 txns (MUL 4, MULH 2, MULHSU 1, MULHU 1) errors=0; ALU side 31 txns
+  (arith 14, logic 3, shift 3, slt 2, branch 2, div 7 with latency histogram 3/30/32/34/35,
+  misaligned 2nd passes 2, bubbles 7) errors=0; both reset-kills published and ignored by the SB;
+  coverage samples 8+31 (0% only because Verilator ignores covergroups); watchdog never fired.
+  While being brought up the env caught a real bug — `mini_dut` drove the AUIPC operand
+  `b=0x0000_A000` while the encoded instruction carried `imm_u=0x000AB000` — the scoreboard flagged
+  `AUIPC result 0xa0cc != pc + imm_u 0xab0cc` and the scenario was corrected. This is exactly the
+  class of error the bench must catch before the big-RTL integration.
+* Verilator memory workaround (built into `run_mini_uvm.sh`): the front end aggregates every
+  generated class .cpp into ONE `V<top>_vm_classes_0.cpp`; compiling that single TU needs >3 GB RSS
+  (observed 3.27 GB and climbing, killed). `tb/scripts/mini_group_mk.py` rewrites `V<top>_classes.mk`
+  into ~100-file group objects (11 fast + 16 slow groups here) — serial make with the PCH then peaks
+  at ≈1.2 GB and finishes in ≈3.3 min. Flow: generate → split → make → run.

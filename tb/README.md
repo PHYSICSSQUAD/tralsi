@@ -21,8 +21,11 @@ tb/
 │                                    alu_mix / lsu_mix (misaligned) blocks for the ALU path
 ├── sequences/mul_program_seq.sv     V_Sequence wrapper + mul_program container (mul_seq_pkg.sv); focus knobs incl. div/alu
 ├── tests/README_mul_tests.md        test definitions (MUL tests + risc_div_test / risc_alu_test)
+├── mini/                            MINI UVM environment: mini_dut.sv (negedge scenario driver - no RTL),
+│                                    mini_tb.sv (top: clk, vif config_db, run_test, watchdog), cb_probe.sv (clocking probe)
 ├── sim/smoke/                       Verilator smoke bench (tb_smoke, OBI memory models, mul/alu checker twins, directed program)
-└── scripts/                         rtl.f, tb_mul.f, slang_check.py, check_bind.py, rv32_asm.py, run_smoke.sh, setup_tools.sh
+└── scripts/                         rtl.f, tb_mul.f, slang_check.py, check_bind.py, rv32_asm.py, run_smoke.sh,
+                                     run_selftest.sh, run_mini_uvm.sh, mini_uvm.f, mini_group_mk.py, setup_tools.sh
 ```
 
 NOTE: the coverage directory is named `fcov/` on purpose - a directory literally named
@@ -62,3 +65,20 @@ Checks:
 * RTL simulation (Verilator, both checker twins + both SVA modules bound): `tb/scripts/run_smoke.sh +dgw=2 +drw=6`,
   `GEN=60 SEEDS="1 2 3" tb/scripts/run_smoke.sh +dgw=2 +drw=6`, `+reset_at=<cycle>`, `+verbose` / `+verbose_alu` / `+trace_alu`;
   `REBUILD=1` after any source change.
+* reference-model self-test (60 vectors, no UVM): `tb/scripts/run_selftest.sh` → greps `rv32m_ref_selftest: PASS`.
+* **mini UVM environment** (real agents + scoreboard + coverage + `mul_smoke_test`, free tools only):
+  `tb/scripts/run_mini_uvm.sh` → PASS/FAIL from the UVM report (all `errors=0`, no UVM_ERROR/FATAL).
+  `REBUILD=1` after any source change; `SIM=questa|vcs|xcelium` selects a vendor simulator
+  (those branches need the vendor's UVM or `UVM_SRC`; they are compile-ready but untested in this sandbox).
+
+Mini UVM environment (tb/mini/) — why it exists:
+* runs the REAL UVM stack (interface, both passive agents, scoreboard, covergroups, test + phases)
+  against `mini_dut.sv`, a small negedge-driven scenario driver (MUL/ALU/branch/DIV/misaligned/reset
+  sequences with native golden results) — no RTL needed, so it validates the bench before integration;
+* `+UVM_NO_DPI` everywhere → pure-SV UVM → any IEEE-1800 tool with a SystemVerilog compiler;
+* Verilator build note: the front end aggregates all UVM classes into ONE generated TU that needs
+  >3 GB to compile. `mini_group_mk.py` rewrites `V*_classes.mk` into ~100-file group objects first
+  (serial build ≈ 4 min, peak RSS ≈ 1.2 GB). Covergroups are parsed but ignored by Verilator
+  (`COVERIGN`); the 13 cross `ignore_bins` selects in `tb/fcov/*` are `ifdef VERILATOR`-guarded.
+* first run on 2026-09-30: MUL 8/8 txns, ALU 31/31 txns, errors=0 → PASS (it also caught a real
+  AUIPC operand bug in the scenario driver while being brought up).

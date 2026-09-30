@@ -82,11 +82,14 @@ class alu_mul_scoreboard extends uvm_scoreboard;
     super.new(name, parent);
   endfunction
 
-  // build_phase: create the MUL input port and read the knobs from the config
-  // db (void'() = we ignore the "found?" return - default stays if not found).
+  // build_phase: create BOTH input ports (a `uvm_analysis_imp` is a class -
+  // without new() the handle stays null and env connect() would fatal at
+  // runtime!) and read the knobs from the config db (void'() = we ignore the
+  // "found?" return - default stays if not found).
   virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    mul_imp = new("mul_imp", this);                    // MUL input port
+    mul_imp = new("mul_imp", this);                    // MUL input port (mul_txn)
+    alu_imp = new("alu_imp", this);                    // ALU input port (alu_txn)
     void'(uvm_config_db#(bit)::get(this, "", "check_result",  check_result));
     void'(uvm_config_db#(bit)::get(this, "", "check_latency", check_latency));
     void'(uvm_config_db#(bit)::get(this, "", "check_wb_port", check_wb_port));

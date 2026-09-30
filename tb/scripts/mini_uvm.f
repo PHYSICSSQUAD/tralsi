@@ -1,0 +1,12 @@
+rtl/package/cv32e40p_pkg.sv
+tb/common/rv32m_ref_pkg.sv
+tb/common/alu_ref_pkg.sv
+tb/sequences/mul_program_pkg.sv
+tb/interfaces/alu_mul_if.sv
+tb/agents/mul_agent/mul_agent_pkg.sv
+tb/agents/alu_agent/alu_agent_pkg.sv
+tb/env/alu_mul_sb_pkg.sv
+tb/fcov/alu_mul_cov_pkg.sv
+tb/sim/smoke/mul_smoke_uvm_pkg.sv
+tb/mini/mini_dut.sv
+tb/mini/mini_tb.sv
