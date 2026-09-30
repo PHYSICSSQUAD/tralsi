@@ -1,0 +1,17 @@
++incdir+tb/agents/mul_agent
++incdir+tb/agents/alu_agent
++incdir+tb/env
++incdir+tb/fcov
++incdir+tb/sequences
+tb/common/rv32m_ref_pkg.sv
+tb/common/alu_ref_pkg.sv
+tb/sequences/mul_program_pkg.sv
+tb/interfaces/alu_mul_if.sv
+tb/agents/mul_agent/mul_agent_pkg.sv
+tb/agents/alu_agent/alu_agent_pkg.sv
+tb/env/alu_mul_sb_pkg.sv
+tb/fcov/alu_mul_cov_pkg.sv
+tb/sequences/mul_seq_pkg.sv
+tb/interfaces/alu_mul_bind.sv
+tb/assertions/mul_sva.sv
+tb/assertions/alu_sva.sv
