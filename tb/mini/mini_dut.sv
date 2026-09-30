@@ -531,6 +531,9 @@ module mini_dut
   endtask
 
   // ---------------------------------------------------------------------------
+  // +mini_prog=simple -> only the 3-instruction program above; default = full
+  bit                               prog_simple = 1'b0;
+
   // The scenario: a directed program that lights up every check in the
   // scoreboard / monitors / coverage.  Structure:
   //   1. reset, 2. MUL side, 3. ALU side, 4. DIV latency corners,
@@ -541,9 +544,29 @@ module mini_dut
     rst_n         = 1'b0;             // hold reset for a few cycles
     set_idle();
     repeat (4) step();
-    rst_n         = 1'b1;
+    rst_n = 1'b1;
     step();
 
+    // Program select: +mini_prog=simple runs ONLY the 3 instructions below
+    // (easy to watch in the console / waveform); default = the full scenario.
+    begin
+      string pname;
+      if ($value$plusargs("mini_prog=%s", pname) && pname == "simple")
+        prog_simple = 1;
+    end
+    $display("[MINI] program = %s", prog_simple ? "SIMPLE (3 instructions)" : "FULL");
+
+    if (prog_simple) begin
+      // ================= SIMPLE: 3 instructions — edit here ==============
+      // 1. MUL x5 = x1*x2 = 7*6, 1 cycle
+      do_mul(i_m(MUL, 5'd5, 5'd1, 5'd2), MUL, 32'h0000_0007, 32'h0000_0006, 5'd5);
+      // 2. MULH signed: high32(-1 * 3), 5 cycles (shows the multicycle shape)
+      do_mul(i_m(MULH, 5'd6, 5'd1, 5'd2), MULH, 32'hFFFF_FFFF, 32'h0000_0003, 5'd6);
+      // 3. plain ALU add: 0x12345678 + 0x11112222
+      do_alu(i_add(5'd12, 5'd1, 5'd2), ALU_ADD, 32'h1234_5678, 32'h1111_2222, .rd_i(5'd12));
+      do_bubble(1);
+      // ===============================================================
+    end else begin
     // ================= MUL side (sb: result, latency, wb, tag) ==============
     // MUL, 1 cycle: 7*6 = 42
     do_mul(i_m(MUL, 5'd5, 5'd1, 5'd2), MUL, 32'h0000_0007, 32'h0000_0006, 5'd5);
@@ -629,6 +652,8 @@ module mini_dut
     do_alu(i_add(5'd16, 5'd3, 5'd4), ALU_ADD, 32'h0BAD_CAFE, 32'h600D_0001, .rd_i(5'd16));
     do_mul(i_m(MUL, 5'd17, 5'd3, 5'd4), MUL, 32'h0000_1234, 32'h0000_5678, 5'd17);
     do_bubble(2);
+    end // else: full program
+
     do_idle(4);                       // let every monitor publish its last txn
 
     scenario_done = 1'b1;

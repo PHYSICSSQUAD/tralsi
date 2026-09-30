@@ -305,3 +305,10 @@ mul_cov + alu_cov, connected exactly like the team env) against a small behaviou
   (observed 3.27 GB and climbing, killed). `tb/scripts/mini_group_mk.py` rewrites `V<top>_classes.mk`
   into ~100-file group objects (11 fast + 16 slow groups here) — serial make with the PCH then peaks
   at ≈1.2 GB and finishes in ≈3.3 min. Flow: generate → split → make → run.
+* **Two runnable copies of the same checking logic** (requested pre-integration, same day): the UVM
+  version above, plus a PLAIN no-UVM twin `tb/mini/mini_plain_tb.sv` (`run_mini_plain.sh`) that uses
+  the exact smoke-checker modules of the RTL bench, defaults to a 3-instruction program
+  (`+mini_prog=simple`: MUL/MULH/ALU_ADD, editable in `mini_dut.sv`; `+mini_prog=full` = whole
+  scenario), prints each instruction (`+verbose`/`+verbose_alu`) and dumps `mini_plain.vcd`
+  (`+vcd`; render via `tb/scripts/vcd_to_html.py` → self-contained HTML waveform).
+  Result: 3 instrs, 0 errors → `MINI_PLAIN TEST PASSED` (build ≈ 20 s — no UVM aggregation).

@@ -21,11 +21,13 @@ tb/
 │                                    alu_mix / lsu_mix (misaligned) blocks for the ALU path
 ├── sequences/mul_program_seq.sv     V_Sequence wrapper + mul_program container (mul_seq_pkg.sv); focus knobs incl. div/alu
 ├── tests/README_mul_tests.md        test definitions (MUL tests + risc_div_test / risc_alu_test)
-├── mini/                            MINI UVM environment: mini_dut.sv (negedge scenario driver - no RTL),
-│                                    mini_tb.sv (top: clk, vif config_db, run_test, watchdog), cb_probe.sv (clocking probe)
+├── mini/                            MINI environments (block-level, pre-integration): mini_dut.sv (negedge
+│                                    scenario driver + 3-instr simple program, no RTL), mini_tb.sv (UVM top),
+│                                    mini_plain_tb.sv (NO-UVM twin: same smoke checkers + VCD), cb_probe.sv
 ├── sim/smoke/                       Verilator smoke bench (tb_smoke, OBI memory models, mul/alu checker twins, directed program)
 └── scripts/                         rtl.f, tb_mul.f, slang_check.py, check_bind.py, rv32_asm.py, run_smoke.sh,
-                                     run_selftest.sh, run_mini_uvm.sh, mini_uvm.f, mini_group_mk.py, setup_tools.sh
+                                     run_selftest.sh, run_mini_uvm.sh, run_mini_plain.sh, mini_uvm.f, mini_plain.f,
+                                     mini_group_mk.py, vcd_to_html.py, setup_tools.sh
 ```
 
 NOTE: the coverage directory is named `fcov/` on purpose - a directory literally named
@@ -70,15 +72,29 @@ Checks:
   `tb/scripts/run_mini_uvm.sh` → PASS/FAIL from the UVM report (all `errors=0`, no UVM_ERROR/FATAL).
   `REBUILD=1` after any source change; `SIM=questa|vcs|xcelium` selects a vendor simulator
   (those branches need the vendor's UVM or `UVM_SRC`; they are compile-ready but untested in this sandbox).
+* **mini plain bench (NO UVM)** — same checkers as the smoke bench, 3-instruction program:
+  `tb/scripts/run_mini_plain.sh` → `MINI_PLAIN TEST PASSED`, per-instruction prints, `mini_plain.vcd`
+  waveform (render: `tb/scripts/vcd_to_html.py <in.vcd> <out.html>`); `+mini_prog=full` for the
+  whole scenario, `+novcd` to skip the dump.
 
-Mini UVM environment (tb/mini/) — why it exists:
-* runs the REAL UVM stack (interface, both passive agents, scoreboard, covergroups, test + phases)
-  against `mini_dut.sv`, a small negedge-driven scenario driver (MUL/ALU/branch/DIV/misaligned/reset
-  sequences with native golden results) — no RTL needed, so it validates the bench before integration;
+Mini environments (tb/mini/) — why they exist — TWO runnable copies of the same checking logic:
+* **UVM version** (`run_mini_uvm.sh`): the REAL UVM stack (interface, both passive agents,
+  scoreboard, covergroups, test + phases) against `mini_dut.sv`, a small negedge-driven scenario
+  driver (MUL/ALU/branch/DIV/misaligned/reset sequences with native golden results) — no RTL,
+  so it validates the bench before integration.
+* **Plain (no-UVM) version** (`run_mini_plain.sh`): `mini_plain_tb.sv` — identical wiring, but the
+  checking is done by the SAME plain-SV checkers the big RTL smoke bench uses
+  (`mul_smoke_checker` + `alu_smoke_checker`). Defaults to the **3-instruction program**
+  (`+mini_prog=simple`: MUL, MULH, ALU_ADD — edit them in `mini_dut.sv`), prints every instruction
+  (`+verbose`/`+verbose_alu`) and dumps a waveform (`+vcd` → `mini_plain.vcd`; render with
+  `tb/scripts/vcd_to_html.py in.vcd out.html` and open the HTML). `+mini_prog=full` runs the whole
+  directed scenario plain as well.
 * `+UVM_NO_DPI` everywhere → pure-SV UVM → any IEEE-1800 tool with a SystemVerilog compiler;
 * Verilator build note: the front end aggregates all UVM classes into ONE generated TU that needs
   >3 GB to compile. `mini_group_mk.py` rewrites `V*_classes.mk` into ~100-file group objects first
-  (serial build ≈ 4 min, peak RSS ≈ 1.2 GB). Covergroups are parsed but ignored by Verilator
-  (`COVERIGN`); the 13 cross `ignore_bins` selects in `tb/fcov/*` are `ifdef VERILATOR`-guarded.
-* first run on 2026-09-30: MUL 8/8 txns, ALU 31/31 txns, errors=0 → PASS (it also caught a real
-  AUIPC operand bug in the scenario driver while being brought up).
+  (serial build ≈ 4 min, peak RSS ≈ 1.2 GB). The plain bench has no UVM, so it builds directly
+  (≈ 20 s). Covergroups are parsed but ignored by Verilator (`COVERIGN`); the 13 cross
+  `ignore_bins` selects in `tb/fcov/*` are `ifdef VERILATOR`-guarded.
+* results: UVM full → MUL 8/8 txns, ALU 31/31 txns, errors=0 → PASS (it also caught a real AUIPC
+  operand bug in the scenario driver while being brought up); plain simple → 3 instrs, 0 errors
+  → MINI_PLAIN TEST PASSED.

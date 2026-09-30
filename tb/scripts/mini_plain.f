@@ -1,0 +1,9 @@
+rtl/package/cv32e40p_pkg.sv
+tb/common/rv32m_ref_pkg.sv
+tb/common/alu_ref_pkg.sv
+tb/sequences/mul_program_pkg.sv
+tb/interfaces/alu_mul_if.sv
+tb/sim/smoke/mul_smoke_checker.sv
+tb/sim/smoke/alu_smoke_checker.sv
+tb/mini/mini_dut.sv
+tb/mini/mini_plain_tb.sv
