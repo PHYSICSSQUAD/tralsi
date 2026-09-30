@@ -1,0 +1,11 @@
+[MINI] program = SIMPLE (3 instructions)
+[75000] MUL_CHECK MUL    pc=0x80       a=0x7        b=0x6        -> x5 = 0x2a       | tot=1 stall=0 mult=1 mc=0
+[135000] MUL_CHECK MULH   pc=0x84       a=0xffffffff b=0x3        -> x6 = 0xffffffff | tot=5 stall=0 mult=5 mc=3
+[155000] ALU_CHECK ALU_ADD   pc=0x88       a=0x12345678 b=0x11112222 -> 0x2345789a we=1 x12 | tot=1 stall=0 net=1                                    
+MINI_PLAIN: MUL checker: 2 transactions (MUL 1, MULH* 1), 0 errors
+MINI_PLAIN: ALU checker: 1 transactions (1 bubbles), 0 errors
+MINI_PLAIN TEST PASSED
+- /home/user/tralsi/tb/mini/mini_plain_tb.sv:177: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.49
+- Verilator: $finish at 245ns; walltime 0.001 s; speed 217.017 us/s
+- Verilator: cpu 0.001 s on 1 threads; allocated 7 MB
