@@ -1,77 +1,77 @@
 // =============================================================================
-// mul_txn.sv  (part of mul_agent_pkg)
-// -----------------------------------------------------------------------------
-// One multiplier-unit instruction observed in the EX stage of cv32e40p_core:
-// MUL / MULH / MULHSU / MULHU (RV32M, the only instructions that use
-// rtl/cv32e40p_mult.sv in the RV32IM configuration).
+// mul_txn.sv  (included inside mul_agent_pkg)
+// =============================================================================
+// WHAT THIS FILE IS:
+//   The transaction = the DATA OBJECT that represents ONE multiplier-unit
+//   instruction seen in the EX stage (MUL / MULH / MULHSU / MULHU).
+//   The monitor CREATES it, the ALU_MUL Scoreboard and the MUL covergroups
+//   CONSUME it. In UVM words: it is a uvm_sequence_item (here used only as a
+//   plain data bag, because the agent is passive - no sequences drive it).
 //
-// Produced by mul_monitor, consumed by the ALU_MUL Scoreboard and by the MUL
-// covergroups in coverage_collector.
-//
-// Field sources (see alu_mul_if.sv for the RTL mapping):
-//   op                 decoded from mult_operator + mult_signed_mode
-//                        MUL_MAC32        -> MUL
-//                        MUL_H, mode 2'b11 -> MULH   (rs1 signed,   rs2 signed)
-//                        MUL_H, mode 2'b01 -> MULHSU (rs1 signed,   rs2 unsigned)
-//                        MUL_H, mode 2'b00 -> MULHU  (rs1 unsigned, rs2 unsigned)
-//                      (rtl/cv32e40p_decoder.sv "supported RV32M instructions")
-//   rs1_val, rs2_val   mult_operand_a / mult_operand_b in the first EX cycle
-//                      (already forwarded values = architectural rs1 / rs2)
-//   result             mult_result in the ex_valid cycle
-//   wdata/waddr/we     register-file ALU write port in the ex_valid cycle
-//   total_cycles       cycles the instruction spent in EX (first mult_en .. ex_valid)
-//   stall_cycles       cycles with mult_ready && !ex_valid (EX held by LSU/WB)
-//   mult_cycles        total_cycles - stall_cycles: expected 1 (MUL) / 5 (MULH*)
-//                      (databook pipeline chapter: "mulh* 5 cycles";
-//                       rtl/cv32e40p_mult.sv FSM IDLE->STEP0->STEP1->STEP2->FINISH)
-//   multicycle_len     cycles with mult_multicycle==1: expected 0 (MUL) / 3 (MULH*)
-//   cycle_start/end    monitor clock-cycle counter at start / completion (lets the
-//                      coverage measure the distance between two MUL-unit ops)
-//   pc, instr          tag taken from the ID issue pulse one cycle earlier
-//   killed_by_reset    reset asserted while the instruction was in EX (no completion)
+// Field sources (RTL names in alu_mul_if.sv / alu_mul_bind.sv):
+//   op               decoded from mult_operator + mult_signed_mode
+//   rs1_val/rs2_val  mult_operand_a / mult_operand_b in the FIRST EX cycle
+//   result           mult_result in the ex_valid cycle
+//   wdata/waddr/we   register-file write port in the ex_valid cycle
+//   total_cycles     how many cycles the op stayed in EX (first .. ex_valid)
+//   stall_cycles     cycles where mult_ready && !ex_valid (held by LSU/WB)
+//   mult_cycles      total - stall => expected 1 (MUL) / 5 (MULH*)
+//   multicycle_len   cycles with mult_multicycle==1 => expected 0 / 3
+//   pc, instr        tag from the ID issue pulse one cycle before EX
+//   killed_by_reset  reset hit while the op was in EX (never completed)
 // =============================================================================
 class mul_txn extends uvm_sequence_item;
 
-  // ---- decoded operation ----------------------------------------------------
-  rand rv32m_op_e   op;
+  // ---- decoded operation (the "what" of this instruction) -------------------
+  rand rv32m_op_e   op;        // rand = randomizable; constraint below limits it
+                               // to MUL/MULH/MULHSU/MULHU only
 
-  // ---- operands (architectural rs1 / rs2 values) ----------------------------
-  rand bit [31:0]   rs1_val;
-  rand bit [31:0]   rs2_val;
+  // ---- operands (the two 32-bit numbers the instruction multiplies) --------
+  rand bit [31:0]   rs1_val;   // first operand  (architectural rs1 value)
+  rand bit [31:0]   rs2_val;   // second operand (architectural rs2 value)
 
-  // ---- raw control fields as seen on the interface (debug / protocol checks)
-  mul_opcode_e      mult_operator;
-  bit [1:0]         mult_signed_mode;
-  bit               mult_sel_subword;   // PULP only -> must be 0
-  bit [4:0]         mult_imm;           // PULP only -> must be 0
-  bit [31:0]        op_c_start;         // mult_operand_c in the first cycle (REGC_ZERO -> 0)
+  // ---- RAW control fields exactly as seen on the interface -----------------
+  // (kept for protocol/debug checks, NOT randomized - the DUT drives them)
+  mul_opcode_e      mult_operator;     // MUL_MAC32 or MUL_H
+  bit [1:0]         mult_signed_mode;  // signedness of a/b (11/01/00)
+  bit               mult_sel_subword;  // PULP feature -> must be 0 in RV32IM
+  bit [4:0]         mult_imm;          // PULP feature -> must be 0 in RV32IM
+  bit [31:0]        op_c_start;        // mult_operand_c in first cycle (=0 here)
 
-  // ---- completion --------------------------------------------------------------
-  bit [31:0]        result;
-  bit [31:0]        wdata;
-  bit [5:0]         waddr;
-  bit               we;
+  // ---- completion data (filled by the monitor at ex_valid) -----------------
+  bit [31:0]        result;   // value the DUT produced (mult_result)
+  bit [31:0]        wdata;    // value actually written to the register file
+  bit [5:0]         waddr;    // destination register number (+ FP bit, =0)
+  bit               we;       // write enable seen in the completing cycle
 
-  // ---- timing ----------------------------------------------------------------
-  int unsigned      total_cycles;
-  int unsigned      stall_cycles;
-  int unsigned      mult_cycles;
-  int unsigned      multicycle_len;
-  int unsigned      cycle_start;        // monitor cycle counter value of the first EX cycle
-  int unsigned      cycle_end;          // ... of the ex_valid cycle (cycle_end - cycle_start + 1 == total_cycles)
-  time              t_start;
-  time              t_end;
+  // ---- timing statistics (all filled by the monitor) -----------------------
+  int unsigned      total_cycles;     // cycles spent in EX (start..complete)
+  int unsigned      stall_cycles;     // of which waiting for LSU/WB
+  int unsigned      mult_cycles;      // total - stall = "real" multiplier cycles
+  int unsigned      multicycle_len;   // cycles with mult_multicycle==1
+  int unsigned      cycle_start;      // monitor cycle counter when op entered EX
+  int unsigned      cycle_end;        // monitor cycle counter when ex_valid seen
+  time              t_start;          // simulation TIME when op entered EX
+  time              t_end;            // simulation TIME when it completed
 
-  // ---- tag -------------------------------------------------------------------
-  bit               tag_valid;
-  bit [31:0]        pc;
-  bit [31:0]        instr;
+  // ---- tag (which instruction caused this - for debug prints) --------------
+  bit               tag_valid;        // 1 = pc/instr below are meaningful
+  bit [31:0]        pc;               // PC of the instruction (from ID stage)
+  bit [31:0]        instr;            // the 32-bit instruction word (from ID)
 
-  // ---- abnormal termination -----------------------------------------------------
-  bit               killed_by_reset;
+  // ---- abnormal termination ------------------------------------------------
+  bit               killed_by_reset;  // 1 = reset came, transaction closed early
 
+  // ---- constraint: this transaction type only holds MUL-unit ops ----------
   constraint c_mul_unit_ops { op inside {MUL, MULH, MULHSU, MULHU}; }
 
+  // ---- UVM field automation macros ----------------------------------------
+  // Register every field for uvm print/copy/compare.
+  // UVM_ALL_ON    = participate in all operations.
+  // UVM_NOCOMPARE = do NOT compare this field (it is informational, e.g. the
+  //                 raw control fields and timing - two valid transactions may
+  //                 legitimately differ in them).
+  // UVM_HEX/UVM_DEC/UVM_TIME = how to print the value.
   `uvm_object_utils_begin(mul_txn)
     `uvm_field_enum(rv32m_op_e,  op,               UVM_ALL_ON)
     `uvm_field_int (rs1_val,                        UVM_ALL_ON | UVM_HEX)
@@ -99,71 +99,83 @@ class mul_txn extends uvm_sequence_item;
     `uvm_field_int (killed_by_reset,                UVM_ALL_ON | UVM_NOCOMPARE)
   `uvm_object_utils_end
 
+  // Standard UVM constructor: call parent with the instance name.
   function new(string name = "mul_txn");
     super.new(name);
   endfunction
 
   // ---------------------------------------------------------------------------
-  // Decode of the DUT control fields. Returns 0 for a combination that the
-  // RV32IM decoder never produces (any other mul_opcode_e, or MUL_H with
-  // signed_mode 2'b10).
+  // decode_ctrl: turn the 2 raw control fields into a clean ISA opcode.
+  //   operator = MUL_MAC32              -> op = MUL
+  //   operator = MUL_H + mode 2'b11      -> op = MULH    (a signed, b signed)
+  //   operator = MUL_H + mode 2'b01      -> op = MULHSU  (a signed, b unsigned)
+  //   operator = MUL_H + mode 2'b00      -> op = MULHU   (both unsigned)
+  // Returns 1 = decoded OK, 0 = combination the RV32IM decoder never produces
+  // (any other operator value, or MUL_H with the illegal mode 2'b10).
+  // "static" = callable without an object instance.
   // ---------------------------------------------------------------------------
   static function bit decode_ctrl(input  mul_opcode_e operator,
                                   input  bit [1:0]    signed_mode,
                                   output rv32m_op_e   op);
-    op = MUL;
+    op = MUL;                        // default (overwritten below)
     case (operator)
-      MUL_MAC32: begin op = MUL; return 1; end
+      MUL_MAC32: begin op = MUL; return 1; end   // plain multiply -> MUL
       MUL_H: begin
         case (signed_mode)
-          2'b11:   begin op = MULH;   return 1; end
-          2'b01:   begin op = MULHSU; return 1; end
-          2'b00:   begin op = MULHU;  return 1; end
-          default: return 0;
+          2'b11:   begin op = MULH;   return 1; end  // both signed
+          2'b01:   begin op = MULHSU; return 1; end  // a signed, b unsigned
+          2'b00:   begin op = MULHU;  return 1; end  // both unsigned
+          default: return 0;                          // 2'b10 never happens
         endcase
       end
-      default: return 0;
+      default: return 0;                              // not a MUL opcode at all
     endcase
   endfunction
 
   // ---------------------------------------------------------------------------
-  // Expectations
+  // Expectation helpers: the scoreboard calls these to know what the DUT
+  // SHOULD have done, without recomputing anything itself.
   // ---------------------------------------------------------------------------
-  function bit [31:0] exp_result();
-    return rv32m_ref(op, rs1_val, rs2_val);
+  function bit [31:0] exp_result();        // expected result = ISA reference
+    return rv32m_ref(op, rs1_val, rs2_val);  // golden model from rv32m_ref_pkg
   endfunction
 
-  function int unsigned exp_mult_cycles();
-    return (op == MUL) ? MUL_LATENCY : MULH_LATENCY;
+  function int unsigned exp_mult_cycles(); // expected "real" cycles in EX
+    return (op == MUL) ? MUL_LATENCY : MULH_LATENCY;  // 1 for MUL, 5 for MULH*
   endfunction
 
-  function int unsigned exp_multicycle_len();
-    return (op == MUL) ? 0 : MULH_MULTICYCLE_LEN;
+  function int unsigned exp_multicycle_len(); // expected mult_multicycle length
+    return (op == MUL) ? 0 : MULH_MULTICYCLE_LEN;     // 0 for MUL, 3 for MULH*
   endfunction
 
-  function bit is_mulh();
+  function bit is_mulh();                  // TRUE for MULH/MULHSU/MULHU
     return (op != MUL);
   endfunction
 
   // ---------------------------------------------------------------------------
-  // Register fields
+  // Register-field accessors: two sources for the destination register -
+  // the write port (what the DUT did) and the instruction word (what the
+  // program asked for). The scoreboard compares them to catch tag bugs.
+  // Instruction fields follow the RISC-V encoding:
+  //   rd  = bits [11:7], rs1 = bits [19:15], rs2 = bits [24:20]
   // ---------------------------------------------------------------------------
-  function bit [4:0] rd();        return waddr[4:0];      endfunction  // from the write port
-  function bit [4:0] instr_rd();  return instr[11:7];     endfunction  // from the tagged word
+  function bit [4:0] rd();        return waddr[4:0];      endfunction  // from DUT write port
+  function bit [4:0] instr_rd();  return instr[11:7];     endfunction  // from instruction word
   function bit [4:0] instr_rs1(); return instr[19:15];    endfunction
   function bit [4:0] instr_rs2(); return instr[24:20];    endfunction
 
   // ---------------------------------------------------------------------------
-  // Human-readable one-liner (used in scoreboard messages)
+  // convert2string: one human-readable line, used by the scoreboard prints.
+  // %-6s = name padded to 6 chars, %08h = 8-digit hex, %0d = decimal.
   // ---------------------------------------------------------------------------
   virtual function string convert2string();
-    string s;
+    string s;   // local string we build up
     s = $sformatf("%-6s rs1=0x%08h rs2=0x%08h -> rd=x%0d res=0x%08h exp=0x%08h | cyc tot=%0d stall=%0d mult=%0d mc=%0d",
                   op.name(), rs1_val, rs2_val, rd(), result, exp_result(),
                   total_cycles, stall_cycles, mult_cycles, multicycle_len);
-    if (tag_valid)       s = {s, $sformatf(" | pc=0x%08h instr=0x%08h", pc, instr)};
-    if (killed_by_reset) s = {s, " | KILLED_BY_RESET"};
-    return s;
+    if (tag_valid)       s = {s, $sformatf(" | pc=0x%08h instr=0x%08h", pc, instr)};  // append tag
+    if (killed_by_reset) s = {s, " | KILLED_BY_RESET"};                                // append flag
+    return s;   // hand the finished line back to the caller
   endfunction
 
 endclass : mul_txn

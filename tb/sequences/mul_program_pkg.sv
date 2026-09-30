@@ -40,47 +40,59 @@ package mul_program_pkg;
   import rv32m_ref_pkg::*;
 
   // ---------------------------------------------------------------------------
-  // RV32IM encoders
+  // RV32IM instruction ENCODERS: build 32-bit words field by field.
+  // Every RISC-V instruction = fields packed at fixed positions:
+  //   [6:0] opcode, [11:7] rd, [14:12] funct3, [19:15] rs1, [24:20] rs2, [31:25] funct7
   // ---------------------------------------------------------------------------
-  localparam logic [6:0] OPC_LUI    = 7'h37;
-  localparam logic [6:0] OPC_AUIPC  = 7'h17;
-  localparam logic [6:0] OPC_JAL    = 7'h6F;
-  localparam logic [6:0] OPC_JALR   = 7'h67;
-  localparam logic [6:0] OPC_BRANCH = 7'h63;
-  localparam logic [6:0] OPC_LOAD   = 7'h03;
-  localparam logic [6:0] OPC_STORE  = 7'h23;
-  localparam logic [6:0] OPC_OPIMM  = 7'h13;
-  localparam logic [6:0] OPC_OP     = 7'h33;
+  localparam logic [6:0] OPC_LUI    = 7'h37;   // LUI
+  localparam logic [6:0] OPC_AUIPC  = 7'h17;   // AUIPC
+  localparam logic [6:0] OPC_JAL    = 7'h6F;   // JAL
+  localparam logic [6:0] OPC_JALR   = 7'h67;   // JALR
+  localparam logic [6:0] OPC_BRANCH = 7'h63;   // branches (BEQ, BNE, ...)
+  localparam logic [6:0] OPC_LOAD   = 7'h03;   // loads (LB, LH, LW, ...)
+  localparam logic [6:0] OPC_STORE  = 7'h23;   // stores (SB, SH, SW)
+  localparam logic [6:0] OPC_OPIMM  = 7'h13;   // immediate ALU ops (ADDI, ...)
+  localparam logic [6:0] OPC_OP     = 7'h33;   // register ALU ops (ADD, MUL, ...)
 
+  // R-type: {funct7, rs2, rs1, funct3, rd, opcode} - register-register ops
   function automatic logic [31:0] enc_r(input logic [6:0] f7, input logic [4:0] rs2, input logic [4:0] rs1,
                                         input logic [2:0] f3, input logic [4:0] rd, input logic [6:0] opc);
     return {f7, rs2, rs1, f3, rd, opc};
   endfunction
 
+  // I-type: {imm[11:0], rs1, funct3, rd, opcode} - immediate ops + loads + jalr
   function automatic logic [31:0] enc_i(input logic [11:0] imm, input logic [4:0] rs1, input logic [2:0] f3,
                                         input logic [4:0] rd, input logic [6:0] opc);
     return {imm, rs1, f3, rd, opc};
   endfunction
 
+  // S-type: immediate SPLIT in two parts - {imm[11:5], rs2, rs1, f3, imm[4:0], op}
   function automatic logic [31:0] enc_s(input logic [11:0] imm, input logic [4:0] rs2, input logic [4:0] rs1,
                                         input logic [2:0] f3, input logic [6:0] opc);
     return {imm[11:5], rs2, rs1, f3, imm[4:0], opc};
   endfunction
 
+  // B-type: branch offset SPLIT and SCRAMBLED (bit0 is not stored, always 0):
+  // {imm[12], imm[10:5], rs2, rs1, f3, imm[4:1], imm[11], opcode}
   function automatic logic [31:0] enc_b(input logic [12:0] off, input logic [4:0] rs2, input logic [4:0] rs1,
                                         input logic [2:0] f3);
     return {off[12], off[10:5], rs2, rs1, f3, off[4:1], off[11], OPC_BRANCH};
   endfunction
 
+  // U-type: {imm[31:12], rd, opcode} - the upper 20 bits (LUI / AUIPC)
   function automatic logic [31:0] enc_u(input logic [19:0] imm20, input logic [4:0] rd, input logic [6:0] opc);
     return {imm20, rd, opc};
   endfunction
 
+  // J-type: jump offset SPLIT and SCRAMBLED like B-type:
+  // {imm[20], imm[10:1], imm[11], imm[19:12], rd, opcode}
   function automatic logic [31:0] enc_j(input logic [20:0] off, input logic [4:0] rd);
     return {off[20], off[10:1], off[11], off[19:12], rd, OPC_JAL};
   endfunction
 
-  // mnemonics ------------------------------------------------------------------
+  // MNEMONICS: one function per assembly instruction, so the scenario blocks
+  // read like assembly: i_addi(rd, rs1, imm) == "addi rd, rs1, imm".
+  // Each just calls the right encoder with the right opcode/funct values.
   function automatic logic [31:0] i_lui (input logic [4:0] rd, input logic [19:0] imm20); return enc_u(imm20, rd, OPC_LUI); endfunction
   function automatic logic [31:0] i_addi(input logic [4:0] rd, input logic [4:0] rs1, input logic [11:0] imm); return enc_i(imm, rs1, 3'b000, rd, OPC_OPIMM); endfunction
   function automatic logic [31:0] i_xori(input logic [4:0] rd, input logic [4:0] rs1, input logic [11:0] imm); return enc_i(imm, rs1, 3'b100, rd, OPC_OPIMM); endfunction
@@ -129,12 +141,16 @@ package mul_program_pkg;
   // ---------------------------------------------------------------------------
   // Program word with annotation
   // ---------------------------------------------------------------------------
+  // One generated instruction = the binary word + its assembly text + which
+  // scenario block produced it (used in listings and debug logs).
+  // ---------------------------------------------------------------------------
   typedef struct {
-    logic [31:0] word;
-    string       text;  // assembly text
-    string       tag;   // scenario tag (block name)
+    logic [31:0] word;     // the 32-bit instruction
+    string       text;     // assembly text, e.g. "mulh x5, x6, x7"
+    string       tag;      // scenario tag, e.g. "back_to_back"
   } prog_word_t;
 
+  // The 11 kinds of scenario blocks the generator can emit (weights below).
   typedef enum int {BLK_SINGLE, BLK_SIGN_MATRIX, BLK_SPECIAL_REGS, BLK_BACK_TO_BACK,
                     BLK_DEPENDENCY, BLK_AFTER_LOAD, BLK_BEFORE_BRANCH, BLK_DIV_MIX,
                     BLK_ALU_MIX, BLK_DIV_CORNERS, BLK_LSU_MIX} blk_kind_e;
@@ -144,67 +160,73 @@ package mul_program_pkg;
   // Generator
   // ---------------------------------------------------------------------------
   class mul_program_gen;
-    // -------- knobs --------
-    int unsigned n_blocks        = 40;
-    int unsigned w_single        = 30;
-    int unsigned w_sign_matrix   = 6;
-    int unsigned w_special_regs  = 8;
-    int unsigned w_back_to_back  = 15;
-    int unsigned w_dependency    = 15;
-    int unsigned w_after_load    = 12;
-    int unsigned w_before_branch = 8;
-    int unsigned w_div_mix       = 6;
-    int unsigned w_alu_mix       = 10;   // RV32I ALU operators (ALU agent: result / decoder checks)
-    int unsigned w_div_corners   = 8;    // divisor classes (latency 3..35), divide by zero, signed overflow
-    int unsigned w_lsu_mix       = 6;    // byte/half/word loads and stores, misaligned included (ALU address path)
-    int unsigned pct_misaligned  = 40;   // % of lsu_mix accesses that are misaligned (2 ALU passes in EX)
-    int unsigned pct_rd_x0       = 3;    // % of M ops with rd = x0
-    int unsigned pct_mulh        = 60;   // % of MUL-family picks that are MULH/MULHSU/MULHU
-    // operand class weights, indexed by operand_class_e
+    // -------- INPUT knobs (set by the sequence / smoke driver) ----------------
+    int unsigned n_blocks        = 40;   // how many scenario blocks to emit
+    // -- block MIX weights: relative chance each block type is picked --
+    int unsigned w_single        = 30;   // one M op, corner-weighted operands
+    int unsigned w_sign_matrix   = 6;    // MULH* x sign combinations
+    int unsigned w_special_regs  = 8;    // rd=x0, rs1==rs2, rd==rs1, ...
+    int unsigned w_back_to_back  = 15;   // 2..5 M ops with no gap
+    int unsigned w_dependency    = 15;   // RAW distance 1/2, chains, forwarding
+    int unsigned w_after_load    = 12;   // LW then MULH/MUL (stall + load-use)
+    int unsigned w_before_branch = 8;    // M op + taken/not-taken branch
+    int unsigned w_div_mix       = 6;    // DIV/REM interleaved with M ops
+    int unsigned w_alu_mix       = 10;   // RV32I ALU ops (ALU agent checks)
+    int unsigned w_div_corners   = 8;    // divisor classes -> latency 3..35, /0, ovf
+    int unsigned w_lsu_mix       = 6;    // loads/stores incl. misaligned (ALU addr)
+    int unsigned pct_misaligned  = 40;   // % of lsu_mix that are misaligned (2 passes)
+    int unsigned pct_rd_x0       = 3;    // % of M ops writing x0
+    int unsigned pct_mulh        = 60;   // % of MUL picks that are MULH*
+    // operand CLASS weights, indexed by operand_class_e (corners get more)
     int unsigned w_opclass[12]   = '{5, 5, 5, 5, 5, 3, 3, 6, 15, 18, 15, 15};
-    logic [31:0] data_base       = 32'h0001_0000;
-    logic [31:0] end_store_addr  = 32'h0001_0FFC;
-    bit          emit_end_block  = 1'b1;
-    bit          init_all_regs   = 1'b1;
+    logic [31:0] data_base       = 32'h0001_0000;  // data window base
+    logic [31:0] end_store_addr  = 32'h0001_0FFC;  // end-of-test store address
+    bit          emit_end_block  = 1'b1;   // append the final store+spin block
+    bit          init_all_regs   = 1'b1;   // start with reg initialization
 
-    // -------- outputs --------
-    prog_word_t  prog[$];
-    int unsigned n_m_ops[8];          // emitted M ops by funct3 (incl. shadow victims)
-    int unsigned n_mul_if_expected;   // MUL-family ops that reach EX
-    int unsigned n_shadow_ops;        // MUL-family ops placed in a taken-branch shadow
-    int unsigned n_blocks_by_kind[N_BLK_KINDS];
+    // -------- OUTPUTS (filled by build()) ------------------------------------
+    prog_word_t  prog[$];                  // the generated instruction stream
+    int unsigned n_m_ops[8];               // M ops by funct3 (incl. shadow ones)
+    int unsigned n_mul_if_expected;        // MUL-family ops that will REACH EX
+    int unsigned n_shadow_ops;             // MUL-family ops in a branch shadow
+    int unsigned n_blocks_by_kind[N_BLK_KINDS];  // per-block-type histogram
 
-    function new();
+    function new();                        // nothing to do in the constructor
     endfunction
 
-    // -------- low level --------
+    // -------- low-level helpers ----------------------------------------------
+    // Append one instruction to the program (word + text + tag stay together).
     function void emit(input logic [31:0] w, input string text, input string tag);
       prog_word_t p;
       p.word = w; p.text = text; p.tag = tag;
-      prog.push_back(p);
+      prog.push_back(p);               // queue push_back
     endfunction
 
     function int unsigned size();
-      return prog.size();
+      return prog.size();              // how many words generated so far
     endfunction
 
-    // li rd, value  (LUI+ADDI or ADDI)
+    // Load an arbitrary 32-bit constant into a register ("li rd, value").
+    // Small values (fit in 12 signed bits) = one ADDI from x0;
+    // big values = LUI + ADDI (the +0x800 compensates ADDI's sign extension).
     function void set_reg(input logic [4:0] rd, input logic [31:0] value, input string tag);
       logic [31:0] hi;
       logic [11:0] lo;
-      if (rd == 5'd0) return;
+      if (rd == 5'd0) return;          // x0 is hardwired to 0 - nothing to do
       if ((value[31:11] == 21'h0) || (value[31:11] == 21'h1F_FFFF)) begin
+        // value fits in signed 12 bits -> single ADDI from x0
         emit(i_addi(rd, 5'd0, value[11:0]), $sformatf("addi x%0d, x0, %0d", rd, $signed(value[11:0])), tag);
       end else begin
-        lo = value[11:0];
-        hi = value + 32'h0000_0800;  // compensate the sign extension of lo
+        lo = value[11:0];              // low 12 bits (will be sign-extended)
+        hi = value + 32'h0000_0800;    // add 0x800 so LUI's + sign-extended lo == value
         emit(i_lui(rd, hi[31:12]), $sformatf("lui x%0d, 0x%05h", rd, hi[31:12]), tag);
-        if (lo != 12'h0)
+        if (lo != 12'h0)               // skip ADDI when the low part is zero
           emit(i_addi(rd, rd, lo), $sformatf("addi x%0d, x%0d, %0d", rd, rd, $signed(lo)), tag);
       end
     endfunction
 
-    // -------- random helpers --------
+    // -------- random helpers --------------------------------------------------
+    // pick_reg: a random register in x4..x31 (x0-x3 are reserved by convention)
     function logic [4:0] pick_reg();
       return 5'($urandom_range(31, 4));
     endfunction
@@ -221,20 +243,24 @@ package mul_program_pkg;
       return r;
     endfunction
 
+    // pick_rd: destination register, occasionally x0 (pct_rd_x0 % of the time)
     function logic [4:0] pick_rd();
       if ($urandom_range(99) < pct_rd_x0) return 5'd0;
       return pick_reg();
     endfunction
 
+    // pick_class: choose an operand CLASS by WEIGHT (w_opclass[]).
+    // Trick: sum all weights, draw a random point in [0,total), walk the
+    // cumulative sum until the point falls inside one class' slice.
     function operand_class_e pick_class();
       int unsigned total = 0, r, acc = 0;
-      for (int i = 0; i < 12; i++) total += w_opclass[i];
-      r = $urandom_range(total - 1);
+      for (int i = 0; i < 12; i++) total += w_opclass[i];   // sum all weights
+      r = $urandom_range(total - 1);                        // random point
       for (int i = 0; i < 12; i++) begin
-        acc += w_opclass[i];
-        if (r < acc) return operand_class_e'(i);
+        acc += w_opclass[i];                                // running total
+        if (r < acc) return operand_class_e'(i);            // found our slice
       end
-      return OPC_POS_LARGE;
+      return OPC_POS_LARGE;                                 // fallback (never hit)
     endfunction
 
     function logic [31:0] value_of_class(input operand_class_e c);
@@ -254,46 +280,53 @@ package mul_program_pkg;
       endcase
     endfunction
 
+    // pick_value: a concrete number from the class chosen by pick_class()
     function logic [31:0] pick_value();
       return value_of_class(pick_class());
     endfunction
 
+    // pick_signed_value: keep drawing until the sign bit matches (neg=1 -> negative)
     function logic [31:0] pick_signed_value(input bit negative);
       logic [31:0] v;
       do v = pick_value(); while (v[31] != negative);
       return v;
     endfunction
 
-    // MUL-family op
-    function rv32m_op_e pick_mul_op();
-      if ($urandom_range(99) < pct_mulh) return rv32m_op_e'($urandom_range(3, 1));
+    // -- op pickers (each returns a random member of its family) --
+    function rv32m_op_e pick_mul_op();     // MUL, or MULH* with pct_mulh %
+      if ($urandom_range(99) < pct_mulh) return rv32m_op_e'($urandom_range(3, 1));  // 1..3 = MULH/MULHSU/MULHU
       return MUL;
     endfunction
 
-    function rv32m_op_e pick_mulh_op();
+    function rv32m_op_e pick_mulh_op();    // always MULH/MULHSU/MULHU (1..3)
       return rv32m_op_e'($urandom_range(3, 1));
     endfunction
 
-    function rv32m_op_e pick_div_op();
+    function rv32m_op_e pick_div_op();     // always DIV/DIVU/REM/REMU (4..7)
       return rv32m_op_e'($urandom_range(7, 4));
     endfunction
 
-    // emit an M op and keep the books
+    // Emit one M-family op AND update the bookkeeping counters:
+    //   n_m_ops[op]        - how many of each funct3 were generated
+    //   n_mul_if_expected  - MUL ops that will actually reach EX
+    //   n_shadow_ops       - MUL ops in a taken-branch shadow (never reach EX)
     function void m_op(input rv32m_op_e op, input logic [4:0] rd, input logic [4:0] rs1, input logic [4:0] rs2,
                        input string tag, input bit in_shadow = 1'b0);
       emit(i_m(op, rd, rs1, rs2), $sformatf("%s x%0d, x%0d, x%0d", op_name(op), rd, rs1, rs2), tag);
       n_m_ops[op]++;
       if (is_mul_op(op)) begin
-        if (in_shadow) n_shadow_ops++;
-        else           n_mul_if_expected++;
+        if (in_shadow) n_shadow_ops++;    // victim of a taken branch -> no EX
+        else           n_mul_if_expected++;  // will show on the MUL interface
       end
     endfunction
 
+    // Random word-aligned offset inside the data window [0, 0x3FC]
     function logic [11:0] pick_data_offset();
       return 12'($urandom_range(12'h3FC >> 2) << 2);
     endfunction
 
     // -------- scenario blocks --------
+    // One M op with class-weighted operands (corner values first).
     function void blk_single();
       logic [4:0] a, b, d;
       a = pick_reg(); b = pick_reg(); d = pick_rd();
@@ -302,6 +335,7 @@ package mul_program_pkg;
       m_op(pick_mul_op(), d, a, b, "single");
     endfunction
 
+    // MULH/MULHSU/MULHU x {pos,neg} x {pos,neg} = 12 cells.
     function void blk_sign_matrix();
       logic [4:0] a, b;
       rv32m_op_e ops[3] = '{MULH, MULHSU, MULHU};
@@ -315,6 +349,7 @@ package mul_program_pkg;
       end
     endfunction
 
+    // rd=x0, rs1==rs2, rd==rs1, rd==rs2, all equal.
     function void blk_special_regs();
       logic [4:0] a, b;
       a = pick_reg(); b = pick_reg_ne(a);
@@ -327,6 +362,7 @@ package mul_program_pkg;
       m_op(pick_mul_op(), a, a, a, "special_regs:all_equal");
     endfunction
 
+    // 2..5 independent M ops with NO gap (pure back-to-back).
     function void blk_back_to_back();
       int unsigned n;
       logic [4:0] a, b, d;
@@ -341,6 +377,7 @@ package mul_program_pkg;
       end
     endfunction
 
+    // RAW hazards: distance 1/2, MULH->MUL, store, address, DIV->MUL, branch, chain.
     function void blk_dependency();
       logic [4:0] a, b, d, e;
       logic [11:0] off;
@@ -398,6 +435,7 @@ package mul_program_pkg;
       endcase
     endfunction
 
+    // LW then MULH/MUL (FSM overlaps the load wait) then a load-use MUL.
     function void blk_after_load();
       logic [4:0] a, l, e, f, d, g;
       logic [11:0] off;
@@ -421,6 +459,7 @@ package mul_program_pkg;
       m_op(pick_mul_op(), g, l, e, "after_load:load_use");   // needs the load result
     endfunction
 
+    // M op + taken branch, M op in the shadow (never reaches EX), M op after not-taken.
     function void blk_before_branch();
       logic [4:0] a, b, d, e;
       a = pick_reg(); b = pick_reg_ne(a);
@@ -449,6 +488,7 @@ package mul_program_pkg;
       endcase
     endfunction
 
+    // DIV/REM interleaved with M ops (multi-cycle ALU + multiplier together).
     function void blk_div_mix();
       logic [4:0] a, b, d, e, f, g;
       a = pick_reg(); b = pick_reg_ne(a);
@@ -462,6 +502,7 @@ package mul_program_pkg;
     endfunction
 
     // RV32I ALU operators on random registers (+ AUIPC/JALR pattern) - ALU agent coverage
+    // RV32I ALU ops, LUI/AUIPC, AUIPC+JALR pattern (ALU agent coverage).
     function void blk_alu_mix();
       int unsigned n;
       logic [4:0]  d, r1, r2;
@@ -504,6 +545,7 @@ package mul_program_pkg;
     endfunction
 
     // divisor classes: sweeps the divider latency (3..35), divide by zero, signed overflow
+    // Divisor classes sweeping latency 3..35, /0, INT_MIN/-1 (risc_m_02).
     function void blk_div_corners();
       int unsigned n;
       logic [4:0]  a, b, d;
@@ -540,7 +582,7 @@ package mul_program_pkg;
       end
     endfunction
 
-    // loads / stores of every width, aligned and misaligned, with an M op or ALU op in between
+    // byte/half/word loads+stores, aligned and misaligned, with M ops around.
     function void blk_lsu_mix();
       int unsigned n;
       logic [4:0]  v, l, d, e;
@@ -567,36 +609,43 @@ package mul_program_pkg;
       end
     endfunction
 
-    // -------- top level --------
+    // -------- top level -------------------------------------------------------
+    // pick_block: choose ONE block kind by its weight (same cumulative-sum
+    // trick as pick_class: sum weights, draw a point, walk until found).
     function blk_kind_e pick_block();
       int unsigned w[N_BLK_KINDS];
       int unsigned total = 0, r, acc = 0;
       w = '{w_single, w_sign_matrix, w_special_regs, w_back_to_back,
             w_dependency, w_after_load, w_before_branch, w_div_mix, w_alu_mix, w_div_corners, w_lsu_mix};
-      for (int i = 0; i < N_BLK_KINDS; i++) total += w[i];
-      r = $urandom_range(total - 1);
+      for (int i = 0; i < N_BLK_KINDS; i++) total += w[i];   // sum all weights
+      r = $urandom_range(total - 1);                          // random point
       for (int i = 0; i < N_BLK_KINDS; i++) begin
         acc += w[i];
-        if (r < acc) return blk_kind_e'(i);
+        if (r < acc) return blk_kind_e'(i);                   // our slice
       end
-      return BLK_SINGLE;
+      return BLK_SINGLE;                                      // fallback
     endfunction
 
+    // build(): assemble the whole program. Steps:
+    //   1. reset output queues and counters
+    //   2. header: x2 = data pointer, optionally initialize x4..x31
+    //   3. emit n_blocks random scenario blocks (weighted pick)
+    //   4. end block: store x0 to end_store_addr, then spin (jal x0, 0)
     function void build();
-      prog.delete();
-      n_mul_if_expected = 0;
+      prog.delete();                        // start with an empty program
+      n_mul_if_expected = 0;                // reset all bookkeeping counters
       n_shadow_ops = 0;
       foreach (n_m_ops[i]) n_m_ops[i] = 0;
       foreach (n_blocks_by_kind[i]) n_blocks_by_kind[i] = 0;
-      // header: data pointer, optional register init
-      set_reg(5'd2, data_base, "header");
+      // header: data pointer in x2, optional register initialization
+      set_reg(5'd2, data_base, "header");   // x2 = data window base
       if (init_all_regs)
         for (int r = 4; r < 32; r++) set_reg(5'(r), pick_value(), "header");
-      for (int i = 0; i < n_blocks; i++) begin
+      for (int i = 0; i < n_blocks; i++) begin   // the main block loop
         blk_kind_e k;
-        k = pick_block();
-        n_blocks_by_kind[k]++;
-        case (k)
+        k = pick_block();                  // weighted random block kind
+        n_blocks_by_kind[k]++;             // histogram for the summary
+        case (k)                           // run exactly one block generator
           BLK_SINGLE:        blk_single();
           BLK_SIGN_MATRIX:   blk_sign_matrix();
           BLK_SPECIAL_REGS:  blk_special_regs();
@@ -610,20 +659,23 @@ package mul_program_pkg;
           default:           blk_lsu_mix();
         endcase
       end
-      if (emit_end_block) begin
-        set_reg(5'd3, end_store_addr, "end");
+      if (emit_end_block) begin            // closing marker the TB watches for
+        set_reg(5'd3, end_store_addr, "end");           // x3 = marker address
         emit(i_sw(5'd0, 5'd3, 12'd0), "sw x0, 0(x3)   ; end-of-test marker", "end");
-        emit(i_jal(5'd0, 21'd0), "jal x0, 0      ; spin", "end");
+        emit(i_jal(5'd0, 21'd0), "jal x0, 0      ; spin", "end");  // infinite loop
       end
     endfunction
 
-    // -------- export --------
+    // -------- export -----------------------------------------------------------
+    // get_words: copy just the binary words into a plain queue (for callers
+    // that do not need text/tags).
     function void get_words(ref logic [31:0] q[$]);
       q.delete();
       foreach (prog[i]) q.push_back(prog[i].word);
     endfunction
 
-    // $readmemh image with a word-address header
+    // write_mem: save the program as a $readmemh image (with @word-address
+    // header) so the Verilator smoke test / simulator can load it directly.
     function void write_mem(input string path, input logic [31:0] base_addr);
       int fd;
       fd = $fopen(path, "w");
@@ -631,8 +683,8 @@ package mul_program_pkg;
         $display("mul_program_gen: cannot write %s", path);
         return;
       end
-      $fdisplay(fd, "@%08h", base_addr >> 2);
-      foreach (prog[i]) $fdisplay(fd, "%08h", prog[i].word);
+      $fdisplay(fd, "@%08h", base_addr >> 2);   // @-header: BYTE addr >> 2
+      foreach (prog[i]) $fdisplay(fd, "%08h", prog[i].word);  // one word/line
       $fclose(fd);
     endfunction
 
@@ -647,6 +699,8 @@ package mul_program_pkg;
       $fclose(fd);
     endfunction
 
+    // summary(): one-line statistics string (words, blocks per kind, M ops per
+    // funct3, and how many MUL transactions the interface should show).
     function string summary();
       return $sformatf("%0d words | blocks single=%0d sign=%0d special=%0d b2b=%0d dep=%0d load=%0d branch=%0d div=%0d alu=%0d divc=%0d lsu=%0d | MUL=%0d MULH=%0d MULHSU=%0d MULHU=%0d DIV*=%0d | expected on MUL if=%0d (shadow %0d)",
                        prog.size(), n_blocks_by_kind[0], n_blocks_by_kind[1], n_blocks_by_kind[2], n_blocks_by_kind[3],

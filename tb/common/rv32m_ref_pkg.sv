@@ -35,22 +35,22 @@ package rv32m_ref_pkg;
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-  localparam logic [31:0] INT32_MIN = 32'h8000_0000;
-  localparam logic [31:0] INT32_MAX = 32'h7FFF_FFFF;
-  localparam logic [31:0] ALL_ONES  = 32'hFFFF_FFFF;
+  localparam logic [31:0] INT32_MIN = 32'h8000_0000;  // smallest signed int (-2^31)
+  localparam logic [31:0] INT32_MAX = 32'h7FFF_FFFF;  // largest signed int (2^31-1)
+  localparam logic [31:0] ALL_ONES  = 32'hFFFF_FFFF;  // 32 ones = -1 signed / max unsigned
 
   // RV32M opcodes. The enum value equals the funct3 field of the instruction
   // (opcode OP = 0110011, funct7 = 0000001), so decoding is a plain cast.
   typedef enum logic [2:0] {
-    MUL    = 3'b000,
-    MULH   = 3'b001,
-    MULHSU = 3'b010,
-    MULHU  = 3'b011,
-    DIV    = 3'b100,
-    DIVU   = 3'b101,
-    REM    = 3'b110,
-    REMU   = 3'b111
-  } rv32m_op_e;
+    MUL    = 3'b000,   // rd = low 32 bits of rs1 * rs2
+    MULH   = 3'b001,   // rd = high 32 bits of signed * signed
+    MULHSU = 3'b010,   // rd = high 32 bits of signed * unsigned
+    MULHU  = 3'b011,   // rd = high 32 bits of unsigned * unsigned
+    DIV    = 3'b100,   // signed divide, round toward zero
+    DIVU   = 3'b101,   // unsigned divide
+    REM    = 3'b110,   // signed remainder (sign of dividend)
+    REMU   = 3'b111    // unsigned remainder
+  } rv32m_op_e;   // enum VALUE == funct3 field of the instruction
 
   // ---------------------------------------------------------------------------
   // Multiplier reference functions
@@ -58,15 +58,15 @@ package rv32m_ref_pkg;
   // MUL: low 32 bits of the 64-bit product (identical for signed and unsigned).
   function automatic logic [31:0] mul_ref(input logic [31:0] a, input logic [31:0] b);
     logic [63:0] p;
-    p = {32'b0, a} * {32'b0, b};
-    return p[31:0];
+    p = {32'b0, a} * {32'b0, b};   // 64-bit product (zero-extend both, multiply)
+    return p[31:0];                // return LOW half (same for signed/unsigned)
   endfunction
 
   // MULH: high 32 bits of signed(rs1) * signed(rs2).
   function automatic logic [31:0] mulh_ref(input logic [31:0] a, input logic [31:0] b);
     logic signed [63:0] p;
-    p = $signed({{32{a[31]}}, a}) * $signed({{32{b[31]}}, b});
-    return p[63:32];
+    p = $signed({{32{a[31]}}, a}) * $signed({{32{b[31]}}, b});  // sign-extend both to 64, signed multiply
+    return p[63:32];               // return HIGH half
   endfunction
 
   // MULHSU: high 32 bits of signed(rs1) * unsigned(rs2).
@@ -74,15 +74,15 @@ package rv32m_ref_pkg;
   // is exact (|a| <= 2^31, b < 2^32  ->  |p| < 2^63).
   function automatic logic [31:0] mulhsu_ref(input logic [31:0] a, input logic [31:0] b);
     logic signed [63:0] p;
-    p = $signed({{32{a[31]}}, a}) * $signed({32'b0, b});
-    return p[63:32];
+    p = $signed({{32{a[31]}}, a}) * $signed({32'b0, b});  // a sign-extended, b zero-extended
+    return p[63:32];               // HIGH half; product always fits in 64 bits signed
   endfunction
 
   // MULHU: high 32 bits of unsigned(rs1) * unsigned(rs2).
   function automatic logic [31:0] mulhu_ref(input logic [31:0] a, input logic [31:0] b);
     logic [63:0] p;
-    p = {32'b0, a} * {32'b0, b};
-    return p[63:32];
+    p = {32'b0, a} * {32'b0, b};   // zero-extend both, plain 64-bit multiply
+    return p[63:32];               // HIGH half
   endfunction
 
   // ---------------------------------------------------------------------------
@@ -90,25 +90,25 @@ package rv32m_ref_pkg;
   // so we never rely on simulator behaviour for x/0 or INT32_MIN/-1)
   // ---------------------------------------------------------------------------
   function automatic logic [31:0] div_ref(input logic [31:0] a, input logic [31:0] b);
-    if (b == 32'h0)                              return ALL_ONES;   // quotient = -1
-    if ((a == INT32_MIN) && (b == ALL_ONES))     return INT32_MIN;  // signed overflow
-    return $signed(a) / $signed(b);                                 // truncates toward zero
+    if (b == 32'h0)                              return ALL_ONES;   // x/0 -> -1 (spec Table 7.1)
+    if ((a == INT32_MIN) && (b == ALL_ONES))     return INT32_MIN;  // (-2^31)/(-1) -> -2^31 (overflow)
+    return $signed(a) / $signed(b);                                 // signed divide, truncates toward 0
   endfunction
 
   function automatic logic [31:0] divu_ref(input logic [31:0] a, input logic [31:0] b);
-    if (b == 32'h0) return ALL_ONES;                                // quotient = 2^32 - 1
-    return a / b;
+    if (b == 32'h0) return ALL_ONES;                                // x/0 -> 2^32-1 (spec)
+    return a / b;                                                   // plain unsigned divide
   endfunction
 
   function automatic logic [31:0] rem_ref(input logic [31:0] a, input logic [31:0] b);
-    if (b == 32'h0)                              return a;          // remainder = dividend
-    if ((a == INT32_MIN) && (b == ALL_ONES))     return 32'h0;      // signed overflow
-    return $signed(a) % $signed(b);                                 // sign of the dividend
+    if (b == 32'h0)                              return a;          // x%0 -> x (spec)
+    if ((a == INT32_MIN) && (b == ALL_ONES))     return 32'h0;      // overflow: remainder is 0
+    return $signed(a) % $signed(b);                                 // sign follows the dividend
   endfunction
 
   function automatic logic [31:0] remu_ref(input logic [31:0] a, input logic [31:0] b);
-    if (b == 32'h0) return a;                                       // remainder = dividend
-    return a % b;
+    if (b == 32'h0) return a;                                       // x%0 -> x (spec)
+    return a % b;                                                   // plain unsigned remainder
   endfunction
 
   // ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ package rv32m_ref_pkg;
                                             input logic [31:0] rs1_val,
                                             input logic [31:0] rs2_val);
     case (op)
-      MUL:     return mul_ref   (rs1_val, rs2_val);
+      MUL:     return mul_ref   (rs1_val, rs2_val);   // dispatch to the right model
       MULH:    return mulh_ref  (rs1_val, rs2_val);
       MULHSU:  return mulhsu_ref(rs1_val, rs2_val);
       MULHU:   return mulhu_ref (rs1_val, rs2_val);
@@ -126,16 +126,17 @@ package rv32m_ref_pkg;
       DIVU:    return divu_ref  (rs1_val, rs2_val);
       REM:     return rem_ref   (rs1_val, rs2_val);
       REMU:    return remu_ref  (rs1_val, rs2_val);
-      default: return 32'hx;
+      default: return 32'hx;                      // unreachable (enum is closed)
     endcase
   endfunction
 
+  // quick classification helpers (used by coverage + scoreboard)
   function automatic bit is_mul_op(input rv32m_op_e op);
-    return (op inside {MUL, MULH, MULHSU, MULHU});
+    return (op inside {MUL, MULH, MULHSU, MULHU});  // one of the 4 multiplies?
   endfunction
 
   function automatic bit is_div_op(input rv32m_op_e op);
-    return (op inside {DIV, DIVU, REM, REMU});
+    return (op inside {DIV, DIVU, REM, REMU});      // one of the 4 divides?
   endfunction
 
   // ---------------------------------------------------------------------------
@@ -144,14 +145,17 @@ package rv32m_ref_pkg;
   localparam logic [6:0] OPCODE_OP   = 7'b0110011;
   localparam logic [6:0] FUNCT7_MULDIV = 7'b0000001;
 
+  // Is this 32-bit word an RV32M instruction? (R-type + funct7 of M-ext)
   function automatic bit is_rv32m_instr(input logic [31:0] instr);
     return (instr[6:0] == OPCODE_OP) && (instr[31:25] == FUNCT7_MULDIV);
   endfunction
 
+  // Which RV32M op? funct3 field [14:12] cast to our enum (values match).
   function automatic rv32m_op_e rv32m_op_of(input logic [31:0] instr);
     return rv32m_op_e'(instr[14:12]);
   endfunction
 
+  // RISC-V field extractors: rd=[11:7], rs1=[19:15], rs2=[24:20]
   function automatic logic [4:0] instr_rd (input logic [31:0] instr); return instr[11:7];  endfunction
   function automatic logic [4:0] instr_rs1(input logic [31:0] instr); return instr[19:15]; endfunction
   function automatic logic [4:0] instr_rs2(input logic [31:0] instr); return instr[24:20]; endfunction
@@ -176,21 +180,22 @@ package rv32m_ref_pkg;
     OPC_NEG_LARGE    // 0x80000001 .. 0xFFFEFFFF
   } operand_class_e;
 
+  // classic power-of-2 test: exactly one bit set and v != 0
   function automatic bit is_pow2(input logic [31:0] v);
     return (v != 32'h0) && ((v & (v - 32'h1)) == 32'h0);
   endfunction
 
   function automatic operand_class_e classify_operand(input logic [31:0] v);
-    if (v == 32'h0000_0000) return OPC_ZERO;
+    if (v == 32'h0000_0000) return OPC_ZERO;       // exact corner values first...
     if (v == 32'h0000_0001) return OPC_ONE;
     if (v == ALL_ONES)      return OPC_MINUS_ONE;
     if (v == INT32_MAX)     return OPC_INT_MAX;
     if (v == INT32_MIN)     return OPC_INT_MIN;
-    if (v == 32'hAAAA_AAAA) return OPC_ALT_AA;
-    if (v == 32'h5555_5555) return OPC_ALT_55;
-    if (is_pow2(v))         return OPC_POW2;
+    if (v == 32'hAAAA_AAAA) return OPC_ALT_AA;     // alternating 1010...
+    if (v == 32'h5555_5555) return OPC_ALT_55;     // alternating 0101...
+    if (is_pow2(v))         return OPC_POW2;       // then "one bit set"
     if (v[31] == 1'b0)      return (v <= 32'h0000_FFFF) ? OPC_POS_SMALL : OPC_POS_LARGE;
-    return (v >= 32'hFFFF_0000) ? OPC_NEG_SMALL : OPC_NEG_LARGE;
+    return (v >= 32'hFFFF_0000) ? OPC_NEG_SMALL : OPC_NEG_LARGE;  // negative ranges
   endfunction
 
   // 1 when the exact signed product does not fit in 32 bits, i.e. MUL's result
@@ -198,14 +203,14 @@ package rv32m_ref_pkg;
   // sign extension of the low word). Interesting bin for MUL coverage.
   function automatic bit mul_signed_overflow(input logic [31:0] a, input logic [31:0] b);
     logic [31:0] lo, hi;
-    lo = mul_ref(a, b);
-    hi = mulh_ref(a, b);
-    return (hi != {32{lo[31]}});
+    lo = mul_ref(a, b);               // low word of the product
+    hi = mulh_ref(a, b);              // high word of the SIGNED product
+    return (hi != {32{lo[31]}});      // high word is NOT the sign extension -> overflow
   endfunction
 
   // 1 when the unsigned product does not fit in 32 bits.
   function automatic bit mul_unsigned_overflow(input logic [31:0] a, input logic [31:0] b);
-    return (mulhu_ref(a, b) != 32'h0);
+    return (mulhu_ref(a, b) != 32'h0);   // high word of unsigned product != 0
   endfunction
 
 endpackage : rv32m_ref_pkg

@@ -27,45 +27,46 @@
 class mul_program extends uvm_object;
   `uvm_object_utils(mul_program)
 
-  logic [31:0] base_addr = 32'h0000_0080;   // == boot_addr_i
-  logic [31:0] data_base = 32'h0001_0000;   // data window used by the program
-  logic [31:0] end_store_addr = 32'h0001_0FFC;
-  logic [31:0] words[$];
-  string       text[$];                      // assembly text per word (debug / log)
-  string       tag[$];                       // scenario tag per word
-  int unsigned n_mul_if_expected;            // MUL/MULH* ops that reach EX
-  int unsigned n_shadow_ops;                 // MUL/MULH* ops in a taken-branch shadow (never reach EX)
-  int unsigned n_m_ops[8];                   // emitted M ops by funct3
-  string       summary;
+  logic [31:0] base_addr = 32'h0000_0080;   // where the program starts (== boot_addr_i)
+  logic [31:0] data_base = 32'h0001_0000;   // data window the program reads/writes
+  logic [31:0] end_store_addr = 32'h0001_0FFC;  // last data address used
+  logic [31:0] words[$];                     // queue of 32-bit instruction words
+  string       text[$];                      // assembly text per word (debug/log)
+  string       tag[$];                       // scenario tag per word (which block)
+  int unsigned n_mul_if_expected;            // MUL/MULH* ops that should reach EX
+  int unsigned n_shadow_ops;                 // MUL/MULH* in a branch shadow (never reach EX)
+  int unsigned n_m_ops[8];                   // emitted M ops indexed by funct3
+  string       summary;                      // one-line description of the program
 
   function new(string name = "mul_program");
     super.new(name);
   endfunction
 
   function int unsigned size();
-    return words.size();
+    return words.size();       // number of instruction words in the program
   endfunction
 
   virtual function string convert2string();
     return $sformatf("mul_program @0x%08h: %s", base_addr, summary);
   endfunction
 
-  // Dump the program as a $readmemh image (word-address header) - handy for
-  // waveform debug and for re-running the image in the Verilator smoke test.
+  // Dump the program as a $readmemh image - handy for waveform debug and for
+  // re-running the same image in the Verilator smoke test.
   function void write_mem(string path);
     int fd;
-    fd = $fopen(path, "w");
-    if (fd == 0) return;
-    $fdisplay(fd, "@%08h", base_addr >> 2);
-    foreach (words[i]) $fdisplay(fd, "%08h", words[i]);
+    fd = $fopen(path, "w");          // open file for writing
+    if (fd == 0) return;             // cannot open -> give up silently
+    $fdisplay(fd, "@%08h", base_addr >> 2);  // @-header: WORD address (byte>>2)
+    foreach (words[i]) $fdisplay(fd, "%08h", words[i]);  // one word per line
     $fclose(fd);
   endfunction
 
+  // Dump a human-readable listing: address, word, assembly text, block tag.
   function void write_listing(string path);
     int fd;
     fd = $fopen(path, "w");
     if (fd == 0) return;
-    $fdisplay(fd, "# %s", summary);
+    $fdisplay(fd, "# %s", summary);  // first line: program summary
     foreach (words[i]) $fdisplay(fd, "%08h: %08h  %-32s ; %s", base_addr + 4 * i, words[i], text[i], tag[i]);
     $fclose(fd);
   endfunction
@@ -77,35 +78,39 @@ endclass : mul_program
 class mul_program_seq extends uvm_sequence #(uvm_sequence_item);
   `uvm_object_utils(mul_program_seq)
 
-  // ---- focus knobs (set by the tests) ----
-  rand bit stall_focus;   // risc_mulh_stall_test: mostly LW -> MULH blocks (external stalls with data wait states)
-  rand bit dep_focus;     // risc_mul_dep_test  : mostly dependency / back-to-back blocks
-  rand bit corner_focus;  // operand corner values only (sign matrix / special registers)
-  rand bit div_focus;     // risc_div_test     : divider latency sweep / corner cells (ALU agent path)
-  rand bit alu_focus;     // risc_alu_test     : RV32I ALU operator mix (ALU agent path)
+  // ---- FOCUS knobs: at most ONE is set by a test (see constraints below) ----
+  rand bit stall_focus;   // risc_mulh_stall_test: mostly LW->MULH (data wait states)
+  rand bit dep_focus;     // risc_mul_dep_test  : dependency / back-to-back blocks
+  rand bit corner_focus;  // operand corner values only (sign matrix / special regs)
+  rand bit div_focus;     // risc_div_test     : divider latency sweep (ALU path)
+  rand bit alu_focus;     // ALU-path tests    : RV32I operator mix (ALU path)
 
-  // ---- program size and block mix (see mul_program_gen for the meaning) ----
-  rand int unsigned n_blocks;
-  rand int unsigned w_single, w_sign_matrix, w_special_regs, w_back_to_back;
-  rand int unsigned w_dependency, w_after_load, w_before_branch, w_div_mix;
-  rand int unsigned w_alu_mix, w_div_corners, w_lsu_mix;
-  rand int unsigned pct_rd_x0;
-  rand int unsigned pct_mulh;
+  // ---- program SIZE and BLOCK MIX percentages (see mul_program_gen) ---------
+  rand int unsigned n_blocks;                  // how many scenario blocks
+  rand int unsigned w_single, w_sign_matrix, w_special_regs, w_back_to_back;  // MUL block weights
+  rand int unsigned w_dependency, w_after_load, w_before_branch, w_div_mix;   // hazard weights
+  rand int unsigned w_alu_mix, w_div_corners, w_lsu_mix;                      // ALU/DIV/LSU weights
+  rand int unsigned pct_rd_x0;                 // % of instructions writing x0
+  rand int unsigned pct_mulh;                  // % of MUL ops that are MULH*
 
-  // ---- fixed environment parameters (aligned with the Reset agent settings) ----
-  logic [31:0] boot_addr      = 32'h0000_0080;
-  logic [31:0] data_base      = 32'h0001_0000;
-  logic [31:0] end_store_addr = 32'h0001_0FFC;
-  bit          emit_end_block = 1'b1;
-  bit          init_all_regs  = 1'b1;
-  string       dump_prefix    = "";           // when set, writes <prefix>.mem / <prefix>.lst
+  // ---- FIXED environment parameters (must match the Reset agent settings) ----
+  logic [31:0] boot_addr      = 32'h0000_0080; // where the core starts fetching
+  logic [31:0] data_base      = 32'h0001_0000; // data window base
+  logic [31:0] end_store_addr = 32'h0001_0FFC; // last valid data address
+  bit          emit_end_block = 1'b1;          // append a final marker block
+  bit          init_all_regs  = 1'b1;          // start by initializing all regs
+  string       dump_prefix    = "";            // if set: write <prefix>.mem/.lst
 
-  // ---- result ----
+  // ---- RESULT: the program this sequence produced ---------------------------
   mul_program prog;
 
-  constraint c_size   { n_blocks inside {[10:150]}; }
-  constraint c_focus  { stall_focus + dep_focus + corner_focus + div_focus + alu_focus <= 1; }
-  constraint c_pct    { pct_rd_x0 inside {[0:10]}; pct_mulh inside {[30:80]}; }
+  constraint c_size   { n_blocks inside {[10:150]}; }         // 10..150 blocks
+  constraint c_focus  { stall_focus + dep_focus + corner_focus + div_focus + alu_focus <= 1; }  // ONE focus max
+  constraint c_pct    { pct_rd_x0 inside {[0:10]}; pct_mulh inside {[30:80]}; }  // sane ranges
+  // WEIGHT CONSTRAINTS: which block types appear, and how often.
+  //   no focus    -> a balanced mix of everything (default random program)
+  //   *_focus=1   -> that scenario dominates, the rest are suppressed (set 0
+  //                  or nearly 0) so the program concentrates on one goal.
   constraint c_weights_default {
     if (!stall_focus && !dep_focus && !corner_focus && !div_focus && !alu_focus) {
       w_single        inside {[20:40]};
@@ -167,10 +172,13 @@ class mul_program_seq extends uvm_sequence #(uvm_sequence_item);
     super.new(name);
   endfunction
 
+  // body(): the heart of the sequence - run the Python-validated generator
+  // (mul_program_gen) with the randomized knobs, then publish the result.
   virtual task body();
     mul_program_gen gen;
-    gen = new();
-    gen.n_blocks        = n_blocks;
+    gen = new();                             // create the generator object
+    gen.n_blocks        = n_blocks;          // copy every randomized knob into it
+    gen.w_single        = w_single;
     gen.w_single        = w_single;
     gen.w_sign_matrix   = w_sign_matrix;
     gen.w_special_regs  = w_special_regs;
@@ -188,31 +196,34 @@ class mul_program_seq extends uvm_sequence #(uvm_sequence_item);
     gen.end_store_addr  = end_store_addr;
     gen.emit_end_block  = emit_end_block;
     gen.init_all_regs   = init_all_regs;
-    if (corner_focus) gen.w_opclass = '{10, 10, 10, 10, 10, 6, 6, 8, 4, 4, 4, 4};
-    gen.build();
+    if (corner_focus) gen.w_opclass = '{10, 10, 10, 10, 10, 6, 6, 8, 4, 4, 4, 4};  // more corner ops
+    gen.build();                           // RUN the generator (builds gen.prog[])
 
+    // Wrap the raw words in the UVM container object.
     prog = mul_program::type_id::create("prog");
     prog.base_addr      = boot_addr;
     prog.data_base      = data_base;
     prog.end_store_addr = end_store_addr;
-    foreach (gen.prog[i]) begin
+    foreach (gen.prog[i]) begin           // copy word + text + tag per instruction
       prog.words.push_back(gen.prog[i].word);
       prog.text.push_back(gen.prog[i].text);
       prog.tag.push_back(gen.prog[i].tag);
     end
-    prog.n_mul_if_expected = gen.n_mul_if_expected;
-    prog.n_shadow_ops      = gen.n_shadow_ops;
-    foreach (gen.n_m_ops[i]) prog.n_m_ops[i] = gen.n_m_ops[i];
+    prog.n_mul_if_expected = gen.n_mul_if_expected;  // how many MUL txns to expect
+    prog.n_shadow_ops      = gen.n_shadow_ops;       // MULs never reaching EX
+    foreach (gen.n_m_ops[i]) prog.n_m_ops[i] = gen.n_m_ops[i];  // per-funct3 counts
     prog.summary = gen.summary();
     `uvm_info("MUL_SEQ", $sformatf("focus stall=%0b dep=%0b corner=%0b div=%0b alu=%0b -> %s", stall_focus, dep_focus, corner_focus, div_focus, alu_focus, prog.summary), UVM_LOW)
-    if (dump_prefix != "") begin
+    if (dump_prefix != "") begin          // optional dump for debug / smoke runs
       prog.write_mem({dump_prefix, ".mem"});
       prog.write_listing({dump_prefix, ".lst"});
     end
-    deliver(prog);
+    deliver(prog);                        // hand the program over (default: config_db)
   endtask
 
   // Hand-over to the Instructions agent (see INTEGRATION note in the header).
+  // Default: publish in the config_db under key "mul_program". The agent's
+  // owner can override this to translate to per-instruction items instead.
   virtual task deliver(mul_program p);
     uvm_config_db#(mul_program)::set(null, "*", "mul_program", p);
     `uvm_info("MUL_SEQ", $sformatf("program with %0d words published in config_db as \"mul_program\" (expected MUL-interface transactions: %0d)",

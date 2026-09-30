@@ -14,16 +14,18 @@
 // =============================================================================
 package alu_agent_pkg;
 
-  import uvm_pkg::*;
-  `include "uvm_macros.svh"
+  import uvm_pkg::*;               // all UVM base classes
+  `include "uvm_macros.svh"        // `uvm_info / `uvm_error macros
 
-  import cv32e40p_pkg::*;
-  import rv32m_ref_pkg::*;
-  import alu_ref_pkg::*;
+  import cv32e40p_pkg::*;          // alu_opcode_e + literals (ALU_ADD, ALU_DIV...)
+  import rv32m_ref_pkg::*;         // div/rem golden-model functions
+  import alu_ref_pkg::*;           // alu_ref, div_latency_ref, alu_expect_of_instr
 
-  `include "alu_txn.sv"
-  `include "alu_agent_cfg.sv"
-  `include "alu_monitor.sv"
-  `include "alu_agent.sv"
+  // Class files textually included INSIDE the package, in dependency order
+  // (each file sees all imports above without importing anything itself):
+  `include "alu_txn.sv"            // data object (one ALU instruction in EX)
+  `include "alu_agent_cfg.sv"      // configuration knobs
+  `include "alu_monitor.sv"        // the passive watcher (the brain)
+  `include "alu_agent.sv"          // the agent (builds + connects the monitor)
 
 endpackage : alu_agent_pkg

@@ -23,51 +23,56 @@ module alu_sva
   alu_mul_if vif
 );
 
-  // ---- shorthand nets ----------------------------------------------------------
-  wire              clk            = vif.clk;
-  wire              rst_n          = vif.rst_n;
-  wire              ex_ready       = vif.ex_ready;
-  wire              ex_valid       = vif.ex_valid;
-  wire              branch_in_ex   = vif.branch_in_ex;
-  wire              lsu_en         = vif.lsu_en;
-  wire              misaligned_2nd = vif.data_misaligned_ex;
-  wire              alu_en         = vif.alu_en;
+  // ---- shorthand nets: short local names for the interface signals ------------
+  wire              clk            = vif.clk;         // core clock
+  wire              rst_n          = vif.rst_n;       // active-low reset
+  wire              ex_ready       = vif.ex_ready;    // EX free to take a new op
+  wire              ex_valid       = vif.ex_valid;    // result valid this cycle
+  wire              branch_in_ex   = vif.branch_in_ex;// op in EX is a branch
+  wire              lsu_en         = vif.lsu_en;      // ALU computes ld/st address
+  wire              misaligned_2nd = vif.data_misaligned_ex;  // 2nd pass of split ld/st
+  wire              alu_en         = vif.alu_en;      // ALU unit active
   alu_opcode_e      alu_operator;
-  assign            alu_operator   = vif.alu_operator;
-  wire [31:0]       alu_operand_a  = vif.alu_operand_a;
-  wire [31:0]       alu_operand_b  = vif.alu_operand_b;
-  wire [31:0]       alu_result     = vif.alu_result;
-  wire              alu_cmp_result = vif.alu_cmp_result;
-  wire              alu_ready      = vif.alu_ready;
-  wire              mult_en        = vif.mult_en;
-  wire              rf_alu_we      = vif.rf_alu_we;
-  wire [5:0]        rf_alu_waddr   = vif.rf_alu_waddr;
-  wire [31:0]       rf_alu_wdata   = vif.rf_alu_wdata;
-  wire              id_valid       = vif.id_valid;
-  wire              is_decoding    = vif.is_decoding;
+  assign            alu_operator   = vif.alu_operator;      // enum needs assign
+  wire [31:0]       alu_operand_a  = vif.alu_operand_a;     // input A (= divisor for DIV)
+  wire [31:0]       alu_operand_b  = vif.alu_operand_b;     // input B (= dividend for DIV)
+  wire [31:0]       alu_result     = vif.alu_result;        // ALU output value
+  wire              alu_cmp_result = vif.alu_cmp_result;    // comparator / branch bit
+  wire              alu_ready      = vif.alu_ready;         // 0 while divider runs
+  wire              mult_en        = vif.mult_en;           // multiplier active (excl check)
+  wire              rf_alu_we      = vif.rf_alu_we;         // RF write enable
+  wire [5:0]        rf_alu_waddr   = vif.rf_alu_waddr;      // dest register
+  wire [31:0]       rf_alu_wdata   = vif.rf_alu_wdata;      // write data
+  wire              id_valid       = vif.id_valid;          // ID holds valid instr
+  wire              is_decoding    = vif.is_decoding;       // instr not killed
 
-  wire is_div_op   = alu_en && is_div_operator(alu_operator);
-  wire is_branch_op= alu_en && is_branch_operator(alu_operator);
-  wire is_single   = alu_en && !is_div_operator(alu_operator);
-  wire issue_pulse = id_valid && is_decoding;
+  // Derived helpers used by many properties:
+  wire is_div_op   = alu_en && is_div_operator(alu_operator);   // a DIV/REM is in EX
+  wire is_branch_op= alu_en && is_branch_operator(alu_operator);// a compare/branch is in EX
+  wire is_single   = alu_en && !is_div_operator(alu_operator);  // single-cycle op in EX
+  wire issue_pulse = id_valid && is_decoding;   // instruction moves ID -> EX next cycle
 
-  // "first cycle of a DIV in EX": a DIV is in EX now and in the previous cycle
-  // either no DIV was in EX or the previous DIV left EX (ex_ready).
+  // "first cycle of a DIV in EX": a DIV is in EX now AND (in the previous cycle
+  // no DIV was in EX, or the previous DIV left EX via ex_ready).
+  // The three *_prev signals are registered (one-cycle delayed) copies.
   logic div_prev, ex_ready_prev, issue_prev;
-  always_ff @(posedge clk or negedge rst_n) begin
+  always_ff @(posedge clk or negedge rst_n) begin   // async reset to 0
     if (!rst_n) begin
       div_prev      <= 1'b0;
       ex_ready_prev <= 1'b0;
       issue_prev    <= 1'b0;
     end else begin
-      div_prev      <= is_div_op;
+      div_prev      <= is_div_op;       // remember what was in EX last cycle
       ex_ready_prev <= ex_ready;
       issue_prev    <= issue_pulse;
     end
   end
-  wire div_first = is_div_op && (!div_prev || ex_ready_prev);
+  wire div_first = is_div_op && (!div_prev || ex_ready_prev);  // this cycle starts a new DIV
 
+  // "default clocking" = all properties use posedge clk unless overridden.
   default clocking sva_cb @(posedge clk); endclocking
+  // "disable iff" = while rst_n is LOW no assertion is checked
+  // (exception: A_RESET_DIV_IDLE below re-enables itself to watch reset).
   default disable iff (!rst_n);
 
   // ---------------------------------------------------------------------------
@@ -141,25 +146,31 @@ module alu_sva
     else $error("alu_sva: %s result %h wrong (divisor=%h dividend=%h, expected %h)", alu_operator.name(), alu_result,
                 alu_operand_a, alu_operand_b, alu_ref(alu_operator, alu_operand_a, alu_operand_b));
 
-  // Exact, data-dependent latency: alu_ready is low for div_latency_ref-1 cycles, then high.
+  // ---- exact data-dependent divider latency (TWO implementations) ------------
+  // Version A (SVA local variable - needs VCS/Xcelium/Questa, NOT Verilator):
+  // at div_first, compute expected cycles; then require !alu_ready for exactly
+  // that many cycles, ending with alu_ready when the counter hits 0.
 `ifndef VERILATOR
   property p_div_latency_exact;
-    int n;
-    (div_first, n = div_latency_ref(alu_operator, alu_operand_a) - 1)
+    int n;   // local countdown variable (sequence local vars unsupported in Verilator)
+    (div_first, n = div_latency_ref(alu_operator, alu_operand_a) - 1)   // init at start
     |-> ((!alu_ready, n = n - 1) [*1:DIV_LATENCY_MAX]) ##1 (alu_ready && (n == 0));
   endproperty
   A_DIV_LATENCY_EXACT: assert property (p_div_latency_exact)
     else $error("alu_sva: divider latency differs from div_latency_ref (%s, divisor=%h)", alu_operator.name(), alu_operand_a);
 `endif
 
-  // Same check as a counter (portable): cycles since the first cycle when alu_ready rises.
+  // Version B (plain counter - runs EVERYWHERE, incl. Verilator):
+  // div_cycles counts the busy cycles; the moment alu_ready rises, check
+  // div_cycles + 1 == div_latency_ref(...). Same expectation, procedural style.
   int unsigned div_cycles;
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) div_cycles <= 0;
-    else if (div_first) div_cycles <= 1;
-    else if (is_div_op && !alu_ready) div_cycles <= div_cycles + 1;
-    else if (!is_div_op) div_cycles <= 0;
+    if (!rst_n) div_cycles <= 0;                            // reset clears the count
+    else if (div_first) div_cycles <= 1;                    // first busy cycle of a DIV
+    else if (is_div_op && !alu_ready) div_cycles <= div_cycles + 1;  // still busy: count
+    else if (!is_div_op) div_cycles <= 0;                   // not a DIV: idle
   end
+  // Immediate assertion: fires only in the cycle the divider becomes ready.
   always @(posedge clk) if (rst_n && is_div_op && alu_ready && (div_cycles != 0)) begin
     A_DIV_LATENCY_CNT: assert (div_cycles + 1 == div_latency_ref(alu_operator, alu_operand_a))
       else $error("alu_sva: %s took %0d cycles to become ready, expected %0d (divisor=%h)",
@@ -181,28 +192,32 @@ module alu_sva
   A_LSU_NO_ALU_WRITE: assert property ((alu_en && lsu_en) |-> !rf_alu_we)
     else $error("alu_sva: rf_alu_we during a load/store address computation");
 
-  // Reset puts the divider back to IDLE (alu_ready high) - checked without the default disable.
+  // Reset puts the divider back to IDLE (alu_ready high again).
+  // "disable iff (1'b0)" = never disable -> we WANT to check during reset.
   A_RESET_DIV_IDLE: assert property (@(posedge clk) disable iff (1'b0) (!rst_n |=> alu_ready))
     else $error("alu_sva: divider not idle after reset");
 
   // ---------------------------------------------------------------------------
-  // Covers
+  // COVERS: goals for the STIMULUS (we WANT these scenarios to happen).
   // ---------------------------------------------------------------------------
-  C_DIV_MIN_LATENCY:        cover property (div_first && (div_latency_ref(alu_operator, alu_operand_a) == DIV_LATENCY_MIN));
-  C_DIV_MAX_LATENCY:        cover property (div_first && (alu_operand_a == 32'h0));
-  C_DIV_FINISH_STALLED:     cover property (is_div_op && alu_ready && !ex_ready);
-  C_DIV_BACK_TO_BACK:       cover property ((is_div_op && ex_ready) ##1 div_first);
-  C_DIV_THEN_BRANCH:        cover property ((is_div_op && ex_ready) ##1 branch_in_ex);
-  C_BRANCH_TAKEN:           cover property (branch_in_ex && alu_cmp_result);
-  C_BRANCH_NOT_TAKEN:       cover property (branch_in_ex && !alu_cmp_result);
-  C_BRANCH_WITHOUT_EX_VALID:cover property (branch_in_ex && ex_ready && !ex_valid);
-  C_ALU_STALLED_BY_LSU_WB:  cover property (is_single && !ex_ready);
-  C_BUBBLE:                 cover property (alu_en && !issue_prev && !misaligned_2nd && (alu_operator == ALU_SLTU) && !rf_alu_we);
-  C_MISALIGNED_2ND_PASS:    cover property (alu_en && misaligned_2nd);
-  C_RESET_DURING_DIV:       cover property (@(posedge clk) disable iff (1'b0) ((is_div_op && !alu_ready) ##1 !rst_n));
+  C_DIV_MIN_LATENCY:        cover property (div_first && (div_latency_ref(alu_operator, alu_operand_a) == DIV_LATENCY_MIN)); // a 3-cycle DIV
+  C_DIV_MAX_LATENCY:        cover property (div_first && (alu_operand_a == 32'h0));     // divide by zero (35 cycles)
+  C_DIV_FINISH_STALLED:     cover property (is_div_op && alu_ready && !ex_ready);       // FINISH held by LSU/WB
+  C_DIV_BACK_TO_BACK:       cover property ((is_div_op && ex_ready) ##1 div_first);     // DIV right after a DIV
+  C_DIV_THEN_BRANCH:        cover property ((is_div_op && ex_ready) ##1 branch_in_ex);  // branch right after DIV
+  C_BRANCH_TAKEN:           cover property (branch_in_ex && alu_cmp_result);            // branch taken
+  C_BRANCH_NOT_TAKEN:       cover property (branch_in_ex && !alu_cmp_result);           // branch not taken
+  C_BRANCH_WITHOUT_EX_VALID:cover property (branch_in_ex && ex_ready && !ex_valid);     // branch leaves w/o ex_valid
+  C_ALU_STALLED_BY_LSU_WB:  cover property (is_single && !ex_ready);                    // single-cycle op stalled
+  C_BUBBLE:                 cover property (alu_en && !issue_prev && !misaligned_2nd && (alu_operator == ALU_SLTU) && !rf_alu_we); // idle bubble
+  C_MISALIGNED_2ND_PASS:    cover property (alu_en && misaligned_2nd);                  // split ld/st 2nd pass
+  C_RESET_DURING_DIV:       cover property (@(posedge clk) disable iff (1'b0) ((is_div_op && !alu_ready) ##1 !rst_n));  // reset mid-DIV
 
 endmodule : alu_sva
 
+// Plug this assertion module into the core; its port connects to the interface
+// instance alu_mul_if_i (bound by alu_mul_bind.sv - compile that first).
+// Define ALU_SVA_NO_BIND to skip this automatic bind.
 `ifndef ALU_SVA_NO_BIND
 bind cv32e40p_core alu_sva alu_sva_i (.vif(alu_mul_if_i));
 `endif

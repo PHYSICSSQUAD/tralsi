@@ -15,39 +15,44 @@
 // UVM-style counting.
 // =============================================================================
 module mul_sva
-  import cv32e40p_pkg::*;
-  import rv32m_ref_pkg::*;
+  import cv32e40p_pkg::*;      // mul_opcode_e + MUL_MAC32 / MUL_H literals
+  import rv32m_ref_pkg::*;     // golden models mul_ref / mulh_ref / ...
 (
-  alu_mul_if vif
+  alu_mul_if vif               // the bound interface instance (our only input)
 );
 
-  // ---- shorthand nets ----------------------------------------------------------
-  wire              clk              = vif.clk;
-  wire              rst_n            = vif.rst_n;
-  wire              ex_ready         = vif.ex_ready;
-  wire              ex_valid         = vif.ex_valid;
-  wire              alu_en           = vif.alu_en;
-  wire              mult_en          = vif.mult_en;
+  // ---- shorthand nets: short local names for the interface signals -----------
+  // (properties below read these instead of vif.mon_cb.xxx every time)
+  wire              clk              = vif.clk;         // core clock
+  wire              rst_n            = vif.rst_n;       // active-low reset
+  wire              ex_ready         = vif.ex_ready;    // EX can take a new op
+  wire              ex_valid         = vif.ex_valid;    // result valid this cycle
+  wire              alu_en           = vif.alu_en;      // ALU unit active
+  wire              mult_en          = vif.mult_en;     // multiplier active
   mul_opcode_e      mult_operator;
-  assign            mult_operator    = vif.mult_operator;
-  wire [1:0]        mult_signed_mode = vif.mult_signed_mode;
-  wire [31:0]       mult_operand_a   = vif.mult_operand_a;
-  wire [31:0]       mult_operand_b   = vif.mult_operand_b;
-  wire [31:0]       mult_operand_c   = vif.mult_operand_c;
-  wire              mult_sel_subword = vif.mult_sel_subword;
-  wire [4:0]        mult_imm         = vif.mult_imm;
-  wire [31:0]       mult_result      = vif.mult_result;
-  wire              mult_ready       = vif.mult_ready;
-  wire              mult_multicycle  = vif.mult_multicycle;
-  wire              mulh_active      = vif.mulh_active;
-  wire              rf_alu_we        = vif.rf_alu_we;
-  wire [5:0]        rf_alu_waddr     = vif.rf_alu_waddr;
-  wire [31:0]       rf_alu_wdata     = vif.rf_alu_wdata;
+  assign            mult_operator    = vif.mult_operator;   // enum needs assign
+  wire [1:0]        mult_signed_mode = vif.mult_signed_mode; // signedness bits
+  wire [31:0]       mult_operand_a   = vif.mult_operand_a;   // operand a
+  wire [31:0]       mult_operand_b   = vif.mult_operand_b;   // operand b
+  wire [31:0]       mult_operand_c   = vif.mult_operand_c;   // accumulator (0 here)
+  wire              mult_sel_subword = vif.mult_sel_subword; // PULP flag
+  wire [4:0]        mult_imm         = vif.mult_imm;         // PULP imm
+  wire [31:0]       mult_result      = vif.mult_result;      // multiplier output
+  wire              mult_ready       = vif.mult_ready;       // 0 in MULH mid-states
+  wire              mult_multicycle  = vif.mult_multicycle;  // 1 in MULH STEP0..2
+  wire              mulh_active      = vif.mulh_active;      // MULH FSM busy
+  wire              rf_alu_we        = vif.rf_alu_we;        // RF write enable
+  wire [5:0]        rf_alu_waddr     = vif.rf_alu_waddr;     // dest register
+  wire [31:0]       rf_alu_wdata     = vif.rf_alu_wdata;     // write data
 
-  wire is_mul  = mult_en && (mult_operator == MUL_MAC32);
-  wire is_mulh = mult_en && (mult_operator == MUL_H);
+  // Derived helpers: which kind of multiply is running this cycle?
+  wire is_mul  = mult_en && (mult_operator == MUL_MAC32);   // plain MUL
+  wire is_mulh = mult_en && (mult_operator == MUL_H);       // MULH/MULHSU/MULHU
 
+  // "default clocking" = every property without its own clock uses posedge clk.
   default clocking sva_cb @(posedge clk); endclocking
+  // "disable iff" = while rst_n is LOW, NO assertion is checked (standard
+  // exception: A_RESET_IDLE below re-enables itself to watch the reset).
   default disable iff (!rst_n);
 
   // ---------------------------------------------------------------------------
@@ -138,24 +143,30 @@ module mul_sva
     else $error("mul_sva: write port inconsistent at MUL completion (we=%0b wdata=%h result=%h waddr=%h)",
                 rf_alu_we, rf_alu_wdata, mult_result, rf_alu_waddr);
 
-  // Reset puts the FSM back to IDLE (checked without the default disable).
+  // Reset puts the FSM back to IDLE. NOTE: "disable iff (1'b0)" = never
+  // disable - we WANT to check during reset (the default would skip it).
   A_RESET_IDLE: assert property (@(posedge clk) disable iff (1'b0) (!rst_n |-> !mulh_active))
     else $error("mul_sva: mulh_active during reset");
 
   // ---------------------------------------------------------------------------
-  // Covers (scenarios the stimulus must reach)
+  // COVERS: goals for the STIMULUS (not bugs - we WANT these to happen).
+  // "##1" = one clock cycle later (temporal operator).
   // ---------------------------------------------------------------------------
-  C_MUL_STALLED_BY_LSU_WB:  cover property (is_mul && mult_ready && !ex_valid);
-  C_MULH_FINISH_STALLED:    cover property (mulh_active && mult_ready && !ex_ready);
-  C_MUL_BACK_TO_BACK:       cover property ((is_mul && ex_valid) ##1 is_mul);
-  C_MULH_BACK_TO_BACK:      cover property ((mulh_active && mult_ready && ex_ready) ##1 is_mulh);
-  C_MULH_THEN_MUL:          cover property ((mulh_active && mult_ready && ex_ready) ##1 is_mul);
-  C_MUL_THEN_MULH:          cover property ((is_mul && ex_valid) ##1 is_mulh);
-  C_MULH_RD_X0:             cover property (is_mulh && mulh_active && mult_ready && ex_valid && (rf_alu_waddr[4:0] == 5'd0));
-  C_RESET_DURING_MULH:      cover property (@(posedge clk) disable iff (1'b0) (mulh_active ##1 !rst_n));
+  C_MUL_STALLED_BY_LSU_WB:  cover property (is_mul && mult_ready && !ex_valid);       // MUL waits for LSU/WB
+  C_MULH_FINISH_STALLED:    cover property (mulh_active && mult_ready && !ex_ready);   // MULH held in FINISH
+  C_MUL_BACK_TO_BACK:       cover property ((is_mul && ex_valid) ##1 is_mul);         // MUL then MUL next cycle
+  C_MULH_BACK_TO_BACK:      cover property ((mulh_active && mult_ready && ex_ready) ##1 is_mulh); // MULH then MULH
+  C_MULH_THEN_MUL:          cover property ((mulh_active && mult_ready && ex_ready) ##1 is_mul);  // MULH then MUL
+  C_MUL_THEN_MULH:          cover property ((is_mul && ex_valid) ##1 is_mulh);        // MUL then MULH
+  C_MULH_RD_X0:             cover property (is_mulh && mulh_active && mult_ready && ex_valid && (rf_alu_waddr[4:0] == 5'd0)); // write to x0
+  C_RESET_DURING_MULH:      cover property (@(posedge clk) disable iff (1'b0) (mulh_active ##1 !rst_n));  // reset mid-MULH
 
 endmodule : mul_sva
 
+// Plug this assertion module into the core, connecting its port to the
+// interface instance alu_mul_if_i (bound by alu_mul_bind.sv - it MUST be
+// compiled before this file). Define MUL_SVA_NO_BIND to skip (e.g. when a
+// testbench binds it another way).
 `ifndef MUL_SVA_NO_BIND
 bind cv32e40p_core mul_sva mul_sva_i (.vif(alu_mul_if_i));
 `endif
