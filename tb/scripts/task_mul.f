@@ -1,7 +1,7 @@
 rtl/package/cv32e40p_pkg.sv
 tb/task_mul/common/rv32m_ref_pkg.sv
 tb/common/alu_ref_pkg.sv
-tb/task_mul/sequences/mul_program_pkg.sv
+tb/sequences/mul_program_pkg.sv
 tb/task_mul/interfaces/alu_mul_if.sv
 tb/task_mul/agents/mul_agent/mul_agent_pkg.sv
 tb/task_mul/env/mul_scoreboard_pkg.sv

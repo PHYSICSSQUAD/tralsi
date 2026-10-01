@@ -25,9 +25,10 @@ INC=(
   "+incdir+$ROOT/tb/task_mul/agents/mul_agent"
   "+incdir+$ROOT/tb/task_mul/env"
   "+incdir+$ROOT/tb/task_mul/fcov"
-  "+incdir+$ROOT/tb/task_mul/sequences"
+  "+incdir+$ROOT/tb/sequences"
 )
-mapfile -t REPO_FILES < <(sed "s#^#$ROOT/#" "$ROOT/tb/scripts/task_mul.f")
+# NOTE: .f files may contain # comments / blank lines — the reader must skip them
+mapfile -t REPO_FILES < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/tb/scripts/task_mul.f" | sed "s#^#$ROOT/#")
 # short program: a few instructions incl. MUL + MULH (fast, easy to read)
 RUN_ARGS=("+mini_prog=simple" "+UVM_NO_RELNOTES")
 

@@ -59,6 +59,16 @@ package mul_demo_pkg;
       m_env = mul_demo_env::type_id::create("m_env", this);
     endfunction
 
+    // -----------------------------------------------------------------------
+    // run_phase: the test just holds the objection up while the mini_dut
+    // program plays. The TOP (task_mul_env_tb) is what triggers the global
+    // event "smoke_done" when the scenario finishes — we only WAIT for it:
+    //   raise_objection  = tell UVM "simulation must not end yet"
+    //   wait_on()        = sleep until smoke_done fires (Ar: السياناريو خلص)
+    //   #10ns            = let last clock edges drain (LRM cleanup window)
+    //   drop_objection   = now UVM may end the test -> report_phase runs
+    // (Identical contract to the integrated bench's tests.)
+    // -----------------------------------------------------------------------
     virtual task run_phase(uvm_phase phase);
       uvm_event #(uvm_object) done_ev;
       phase.raise_objection(this, "MUL demo program running");
@@ -68,6 +78,13 @@ package mul_demo_pkg;
       phase.drop_objection(this, "MUL demo program finished");
     endtask
 
+    // -----------------------------------------------------------------------
+    // report_phase: our PASS/FAIL verdict for the whole task.
+    //   line 1 = TASK_MUL SUMMARY (parsed by run_task_mul.sh to print PASS)
+    //   error if any scoreboard check failed            (errors != 0)
+    //   error if the agent never saw a MUL instruction  (plumbing broken —
+    //        e.g. wrong config_db key / interface not hooked)
+    // -----------------------------------------------------------------------
     virtual function void report_phase(uvm_phase phase);
       super.report_phase(phase);
       `uvm_info("TASK_MUL", $sformatf("TASK_MUL SUMMARY: monitor txns=%0d scoreboard txns=%0d errors=%0d killed=%0d coverage samples=%0d",

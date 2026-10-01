@@ -6,14 +6,33 @@
 // everyone's parts later into the integrated alu_mul_scoreboard).
 //
 // Checks (same contract as the integrated scoreboard — vplan risc_m_00/01,
-// risc_dec_01):
+// risc_dec_01).  لكل فحص هنا سبب من الـ ISA/الداتا بوك مش مجرد رقم عشوائي:
+//
 //   SB_MUL_RESULT   result == rv32m_ref(op, rs1, rs2)      (golden model)
+//       السبب: الـ ISA بيحدد بدقة النتيجة (MUL = low 32 لجدوبة rs1*rs2،
+//       MULH/MULHSU/MULHU = الـ upper 32 بطرق التوقيع المختلفة) — لو الداتا
+//       بوك رجّع أي حاجة تانية يبقى في bug في حساب المضاعف نفسه.
+//
 //   SB_MUL_LATENCY  mult_cycles == 1 (MUL) / 5 (MULH*) net of external
 //                   stalls; multicycle window == 0 / 3
+//       السبب: ده جدول الداتا بوك نفسه (pipeline.rst: "1 (mul)",
+//       "5 (mulh, mulhsu, mulhu)") — اللااتنسية جزء من المواصفة، مش أداء.
+//       الـ "net of external stalls" عشان LSU/WB ماسكين EX مالهمش علاقة
+//       بسرعة المضاعف، ونافذة mult_multicycle (3 دورات) هي الـ FSM بتاع
+//       MULH اللي بيقول لـ ID "سيبلي operand_c ثابت".
+//
 //   SB_MUL_WB       rf_alu_we == 1, rf_alu_wdata == mult_result,
 //                   rf_alu_waddr[5] == 0
+//       السبب: النتيجة مفيدها لوحدها لو وصلت الريجستر فايل صح — الداتا بوك
+//       بيقول الكتابة بتحصل من EX مباشرة، فلازم في نفس دورة ex_valid:
+//       we=1، والـ mux يوصل mult_result لـ wdata، ومفيش FP file في
+//       RV32IM (waddr[5] لازم 0).
+//
 //   SB_MUL_TAG      tagged instruction word = RV32M encoding whose funct3
 //                   matches the executed op and whose rd matches waddr
+//       السبب: بينصحح pipeline desync — تعليمة اتفرّعت من ID لازم تكون
+//       هي نفسها اللي نفّذها EX (نفس funct3 → نفس op، ونفس rd → نفس
+//       الريجستر اللي اتكتب). أي mismatch = الـ decode/forwarding اتلخبط.
 //
 // Compile after: uvm_pkg, cv32e40p_pkg, rv32m_ref_pkg, mul_agent_pkg
 // =============================================================================

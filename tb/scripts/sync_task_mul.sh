@@ -13,8 +13,9 @@ cp tb/agents/mul_agent/mul_txn.sv tb/agents/mul_agent/mul_agent_cfg.sv \
 cp tb/common/rv32m_ref_pkg.sv tb/common/rv32m_ref_selftest.sv tb/task_mul/common/
 cp tb/fcov/mul_cov.sv                           tb/task_mul/fcov/
 cp tb/assertions/mul_sva.sv                     tb/task_mul/assertions/
-cp tb/sequences/mul_program_pkg.sv tb/sequences/mul_program_seq.sv \
-   tb/sequences/mul_seq_pkg.sv                  tb/task_mul/sequences/
+# sequences are NOT part of this task (owner = sequence team). They stay
+# available OUTSIDE the task folder, in tb/sequences/ — remove any stale copy.
+rm -rf "$ROOT/tb/task_mul/sequences"
 cp tb/tests/README_mul_tests.md                 tb/task_mul/tests/
 
 echo "[sync_task_mul] copied files refreshed. Verify with:"
