@@ -15,6 +15,16 @@
 //   3. create a default cfg; then get the virtual interface from
 //      uvm_config_db#(virtual alu_mul_if) key "alu_mul_vif"
 //      (published once at time 0 by alu_mul_bind.sv's registrar)
+//
+// 📖 بالعربي (Arabic): الاجينت = **صندوق توصيل** بس، مش بيسوق حاجة:
+//   - هو اللي بيبني المونيتور ويديه الـ cfg والـ vif (لو مفيش → fatal).
+//   - الـ ap بتاعه = مخرج واحد بيتباع ليهم اتنين: السكور بورد والكفر
+//     (نفس بورت الـ analysis ينفع يتصل لأكتر من واحد → كده الكل بيشوف
+//      نفس الـ txn مرة واحدة).
+//   - مفيش driver/sequencer عشان اتفاقنا: الاجينتات passive كلها (وال instruction
+//     agent هو الوحيد active في البيئة الكبيرة — مش جوّه التاسك ده).
+//   - ترتيب find الـ cfg: handle مباشر من الـ env ← config_db "cfg" ←
+//     default object + الـ vif من "alu_mul_vif".
 // =============================================================================
 class mul_agent extends uvm_agent;
   `uvm_component_utils(mul_agent)   // register this class with the UVM factory

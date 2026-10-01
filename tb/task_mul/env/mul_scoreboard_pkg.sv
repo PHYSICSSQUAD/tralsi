@@ -80,6 +80,21 @@ package mul_scoreboard_pkg;
     endfunction
 
     // ---------------------------------------------------------------------------
+    // 📖 خريطة الكود بالعربي — الفحوص الأربعة بالترتيب اللي هتلاقيهم في الكود:
+    //   [قبل الفحوص] killed_by_reset؟ → يتعدى فورًا (التعليمـة ما كملتش —
+    //                مش خطأ الداتا بوك، وبيتعدّى في الكفر كمان)
+    //   [فحص ①] CHECK 1 → "هل النتيجة صح؟"        result == rv32m_ref(...)
+    //   [فحص ②] CHECK ② → "هل وصلت للريجستر فايل؟" we=1 + wdata==result
+    //                      + waddr[5]=0 (RV32IM مفيش فلوتينگ فايل)
+    //   [فحص ③] CHECK ③ → "هل التوقيت صح؟"         1/5 دورات + نافذة 0/3
+    //   [فحص ④] CHECK ④ → "هل التاب متوافق؟"       نفس op + نفس rd
+    //   [بعد الفحوص] ok=0 → n_mul_err++ → report_phase يقلب UVM_ERROR لو
+    //                errors ≠ 0 → الـ runner يطبع FAIL.
+    //
+    // قاعدة مذاكرة: ① "الحساب"، ② "التسليم"، ③ "المواصفة الزمنية"،
+    // ④ "الاتساق" — لو فهمت الأربعة دي فهمت verification plan بتاع أي
+    // وحدة حسابية في أي بروسيسور.
+    // ---------------------------------------------------------------------------
     // write: called by the MUL agent for every mul_txn it publishes.
     // "ok" tracks whether this transaction passed all checks (for the counter).
     // (Body kept byte-equivalent to write_mul() of alu_mul_scoreboard.sv.)

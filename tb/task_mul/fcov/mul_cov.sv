@@ -22,6 +22,30 @@
 // =============================================================================
 // uvm_subscriber #(mul_txn) gives us: an analysis_export input port + a pure
 // virtual write(mul_txn) method that the framework calls for every txn.
+//
+// =============================================================================
+// 📖 الكافر جروبس الستة بالعربي — كل واحد بيجاوب على سؤال معين (Arabic)
+// -----------------------------------------------------------------------------
+//   ① cg_op_operands : كل عملية MUL × فئات الـ operands (0، 1، -1، INT_MIN،
+//      أنماط AA/55، ...) — السؤال: هل جرّبنا كل combinationships المهمة؟
+//   ② cg_result      : صنف النتيجة (0 / كلها 1s / MSB=1 / overflow signed/
+//      unsigned) — النتايج النادرة هي اللي بتكشف أخطاء التوقيع.
+//   ③ cg_timing      : اللااتنسية × الستال الخارجي — **illegal_bins** على كل
+//      حاجة غير 1 و5 (يعني لو الداتا بوك رجّع 3 لمُبدل، التغطية نفسها هتصرخ).
+//   ④ cg_regs        : زوايا rd/rs1/rs2 (x0، الكتابة على نفس المصدر = RAW)
+//      — محتاج التاب (instr word) عشان يعرف rs1/rs2.
+//   ⑤ cg_sequence    : مين جه قبل مين + الـ gap بينهم + هل فيه RAW dependency
+//      — ده بيجاوب على أسئلة الـ hazards (الداتا بوك: forwarding يلغي الـ
+//      penalty يعني gap صغير ممكن يحصل فعلاً).
+//   ⑥ cg_reset       : الريست وقعت أنهي دورة من تنفيذ التعليمة (أول/STEP/FINISH)
+//      — يتشال منها أي txn عادي، الـ killed_by_reset بس اللي بيتسجل فيها.
+//
+// • على Verilator: الـ covergroups بتتجاهل (COVERIGN) → العدّاد بيشتغل
+//   (n_sampled) لكن النسب تفضل 0% — عشان كده فيه `ifdef VERILATOR يبدّل
+//   ignore_bins لـ cross عادي عشان الترجمة تنجح، والنسبة الحقيقية بتتحسب
+//   على أي سيموليتور UVM كامل (Questa/Xcelium...).
+//
+// =============================================================================
 class mul_cov extends uvm_subscriber #(mul_txn);
   `uvm_component_utils(mul_cov)
 

@@ -11,6 +11,13 @@
 //   tb/common/rv32m_ref_pkg.sv   -> gives us rv32m_op_e + reference functions
 //   tb/interfaces/alu_mul_if.sv  -> the shared ALU_MUL interface (the 1 of 6)
 //   uvm_pkg                      -> all UVM base classes
+//
+// 📖 بالعربي (Arabic): الـ package = "الصندوق اللي بيجمّع كله" بتاع الاجينت:
+//   جوّاه بالترتيب: mul_txn → mul_agent_cfg → mul_monitor → mul_agent
+//   (كل واحد بيعتمد على اللي قبله → عشان كده الترتيب ده بالظبط).
+//   الـ import المقصوص (mul_opcode_e + MUL_MAC32 + MUL_H بس) = مبدأ
+//   least-privilege: نجيب من RTL package اللي محتاجينه بس، عشان أي rename
+//   في الـ RTL يكسرنا هنا برسالة واضحة مش في حتة تانية.
 // =============================================================================
 package mul_agent_pkg;
 

@@ -12,7 +12,33 @@
 //
 // Naming: A_* assertions, C_* covers. Assertion failures are reported through
 // $error by the simulator; wrap with a UVM report catcher if the flow needs
-// UVM-style counting.
+//   UVM-style counting.
+// =============================================================================
+//
+// =============================================================================
+// 📖 إزاي تقرا ملف الـ SVA بالعربي (Arabic)
+// -----------------------------------------------------------------------------
+// • assertion ≠ cover: الاتنين بيقولوا "القاعدة دي لازم يحصلوا"، بس:
+//     assert → لو **مش** حصلت = BUG (الرسم اتخرب) → الفلو اعتذر بـ $error
+//     cover  → لازم تحصل عشان نتأكد إن الـ stimulus وصلت للمكان ده (مش bug)
+//
+// • كل property هنا مشتقّة من ملفات RTL محددة (موثقة في الهيدر):
+//     cv32e40p_mult.sv     → شكل الـ FSM بتاع MULH + النتائج
+//     cv32e40p_ex_stage.sv → ex_ready/ex_valid + بوابة الكتابة
+//     cv32e40p_decoder.sv  → الترميز (أي أمر يوصل للمضاعف أصلًا)
+//
+// • ترتيب الملف = ترتيب المذاكرة:
+//     ① ترميز/تكوين (أي operator مسموح؟ signed_mode قانونية؟ PULP مقفولة؟)
+//     ② MUL الدورة الواحدة (ready محلّي، النتيجة low-32، op_c=0)
+//     ③ MULH الـ FSM (IDLE → 3 دورات STEP → FINISH + تثبيت operands)
+//     ④ التفاعل مع EX (busy يقفل EX، مفيش خروج من EX من غير ex_valid)
+//     ⑤ الريست (FSM يرجع IDLE)
+//     ⑥ covers (back-to-back، ستال من LSU، reset في نص MULH، كتابة x0)
+//
+// • disable iff (!rst_n): الافتراضي إن الفحوص مقفولة وإنت في الريست
+//   (مش منطقي تحاسب واحنا بنعيد الضبط) — غير A_RESET_IDLE اللي بيعيد
+//   تفعيل نفسه عشان يفحص إن mulh_active مقفول أثناء الريست.
+//
 // =============================================================================
 module mul_sva
   import cv32e40p_pkg::*;      // mul_opcode_e + MUL_MAC32 / MUL_H literals

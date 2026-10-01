@@ -28,6 +28,40 @@
 //   the CURRENT cycle belongs to the NEXT instruction - therefore the tag is
 //   attached to a transaction BEFORE we record this cycle's pulse.
 // =============================================================================
+//
+// =============================================================================
+// 📖 مثال عملي cycle-by-cycle — المونيتور بيعمل إيه بالظبط (Arabic)
+// -----------------------------------------------------------------------------
+// ▸ حالة A: تعليمة MUL عادية (دورة واحدة في EX — من جدول الداتا بوك "1 (mul)"):
+//
+//   دورة N    │ id_valid=1 && is_decoding=1  ← TAG PULSE: pc_id/instr_id
+//             │   بتتخزن في tag_pc/tag_instr (أو لاحقًا لو مفيش txn شغال)
+//   ──────────┼────────────────────────────────────────────────────────────
+//   دورة N+1  │ mult_en=1 (الـ ID/EX register اتكتب) → start_txn():
+//   (أول EX)  │   يبني mul_txn جديد + ي attaches التاب بتاع دورة N
+//             │   + فحوص البداية (decode صح، مفيش alu_en، subword=0...)
+//             │   ونفس الدورة: mult_ready=1 و ex_valid=1 → finish_txn():
+//             │   يمسك mult_result + rf_alu_we/waddr/wdata → ap.write()
+//             │   (النتيجة بتتنشر على الـ scoreboard والـ coverage فورًا)
+//
+// ▸ حالة B: تعليمة MULH* (5 دورات — "5 (mulh, mulhsu, mulhu)"):
+//
+//   N+1  IDLE    : start_txn؛ mult_ready=0 (لسه محسبش) mult_multicycle=0
+//   N+2  STEP0   : mult_multicycle=1 → multicycle_len++
+//   N+3  STEP1   : mult_multicycle=1 → multicycle_len++
+//   N+4  STEP2   : mult_multicycle=1 → multicycle_len++   (النافذة = 3 دورات)
+//   N+5  FINISH  : mult_ready=1 + ex_valid=1 → finish_txn
+//                  mult_cycles = total - stall = 5 ✓ (المتوقع من الداتا بوك)
+//
+// ▸ الستال الخارجي (مهم تفرّقه عن اللااتنسية):
+//   لو في أي دورة المضاعف خلص (mult_ready=1) بس ex_valid=0 → يعني LSU أو WB
+//   ماسكين الـ EX → stall_cycles++. المضاعف مالوش دعوة بالستال ده، وعشان
+//   كده الفحص بيحسب: mult_cycles = total_cycles - stall_cycles.
+//
+// ▸ الريست: rst_n=0 وأنت جوّه txn → تقفله killed_by_reset=1 وتنشره، والـ
+//   scoreboard يتخطاه والـ coverage يعدّه في cg_reset بس.
+//
+// =============================================================================
 class mul_monitor extends uvm_monitor;
   `uvm_component_utils(mul_monitor)   // register with the UVM factory
 

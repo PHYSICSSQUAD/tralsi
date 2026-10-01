@@ -7,6 +7,15 @@
 //   verbosity. Following the architecture picture, the MUL agent is PASSIVE
 //   (monitor only - no driver, no sequencer), so the cfg has no driver knobs:
 //   the only stimulus is the instruction stream from the Instructions agent.
+//
+// 📖 الـ knobs (Arabic) — كل واحد بيفتح/يقفل إيه:
+//   vif            = مقبض الاتصال بالإشارة (من غيره المونيتور أعمى)
+//   is_active      = المفروض ALWAYS passive؛ لو حد حط active بنصرخ ونرجّعه
+//   check_protocol = يفتح فحوص الـ protocol جوّه المونيتور (أثناء التنفيذ)
+//                    زي: operands متغيّرش وإنت جوّه EX، mult_en ميتقفلش بدري
+//   tag_enable     = يفتح/يقفل تتبّع التاب من مرحلة ID
+//   max_cycles_in_ex = سقف الدورات قبل ما نقول "تعليق محصل" (hang detector)
+//   verbose        = طباعة كل txn لحاله وقت التشغيل
 // =============================================================================
 class mul_agent_cfg extends uvm_object;
 
