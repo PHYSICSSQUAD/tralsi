@@ -13,9 +13,12 @@ cp tb/agents/mul_agent/mul_txn.sv tb/agents/mul_agent/mul_agent_cfg.sv \
 cp tb/common/rv32m_ref_pkg.sv tb/common/rv32m_ref_selftest.sv tb/task_mul/common/
 cp tb/fcov/mul_cov.sv                           tb/task_mul/fcov/
 cp tb/assertions/mul_sva.sv                     tb/task_mul/assertions/
-# sequences are NOT part of this task (owner = sequence team). They stay
-# available OUTSIDE the task folder, in tb/sequences/ — remove any stale copy.
-rm -rf "$ROOT/tb/task_mul/sequences"
+# the OLD program-generator sequences are NOT part of this task (owner =
+# sequence team; they live aside in tb/sequences/). The task's own simple
+# sequence item (mul_seq_item.sv) stays in place.
+rm -f "$ROOT/tb/task_mul/sequences/mul_program_pkg.sv" \
+      "$ROOT/tb/task_mul/sequences/mul_program_seq.sv" \
+      "$ROOT/tb/task_mul/sequences/mul_seq_pkg.sv"
 cp tb/tests/README_mul_tests.md                 tb/task_mul/tests/
 
 echo "[sync_task_mul] copied files refreshed. Verify with:"

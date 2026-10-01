@@ -5,10 +5,10 @@ the team's single environment (we are 5 owners; everything gets merged later
 into ONE environment). Everything here compiles stand-alone; the other tasks
 (ALU, sequences, predictor, ...) live with their owners.
 
-> **ملاحظة مهمة:** الـ sequences مش تاسك خالص — اتشالت من الفولدَر ده بالكامل
-> وفضلت **على جنب** في `tb/sequences/` لو احتجتها مستقبلاً (شغّالة أصلاً في
-> البيئة). الفولدَر ده بقى = الانترفاس + الاجينت + المونيتور + السكور بورد +
-> الريفرنس موديل + الكافر جروبس + الـ SVA + تعريفات الـ tests بس.
+> **ملاحظة مهمة:** الـ sequences القديمة (الـ program generator: `mul_program_pkg`
+> وإخواته) مش تاسك خالص — فاضلة **على جنب** في `tb/sequences/`. أما
+> **`sequences/mul_seq_item.sv`** (السيكوانس أيتم البسيط بنفس قالب الفريق)
+> فهو **جزء من التاسك** وقاعد جوّه الفولدَر ده.
 
 | Piece | File(s) | What it is |
 |---|---|---|
@@ -18,11 +18,13 @@ into ONE environment). Everything here compiles stand-alone; the other tasks
 | Reference model | `common/rv32m_ref_pkg.sv` + `common/rv32m_ref_selftest.sv` | golden RV32M functions (`rv32m_ref`, decode helpers) + self-test |
 | Covergroups | `fcov/mul_cov.sv` + `fcov/mul_cov_pkg.sv` | the 6 MUL covergroups (op/operands, result, timing, regs, sequence, reset) |
 | Assertions | `assertions/mul_sva.sv` | 17 MUL SVA + 8 covers (bind into the core during integration) |
+| Sequence item | `sequences/mul_seq_item.sv` | simple `uvm_sequence_item` — same template as the team's `instr_seq_item` |
 | Tests doc | `tests/README_mul_tests.md` | MUL test definitions for the team env |
 
 **Not in this folder (on purpose):** `alu_mul_bind.sv` (integration glue, added
 when merging with the real RTL), the plain smoke checkers (RTL-bench only),
-sequences (على جنب في `tb/sequences/`), and every ALU/DIV piece (other task).
+the old sequence generator (على جنب في `tb/sequences/`), and every ALU/DIV
+piece (other task).
 
 ---
 
@@ -150,7 +152,8 @@ files **of this folder** directly — so what runs is exactly what you submit.
 ```
 tb/scripts/sync_task_mul.sh
 ```
-(The script also **enforces** that `sequences/` stays OUT of this folder.)
+(The script removes any stale copy of the old sequence generator but keeps
+this folder's own `sequences/mul_seq_item.sv`.)
 (`env/mul_scoreboard_pkg.sv` and `fcov/mul_cov_pkg.sv` are deliverable-only
 extractions — keep them in sync with the MUL half of
 `tb/env/alu_mul_scoreboard.sv` by hand; the checks are documented in the file
