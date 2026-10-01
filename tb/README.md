@@ -21,13 +21,19 @@ tb/
 │                                    alu_mix / lsu_mix (misaligned) blocks for the ALU path
 ├── sequences/mul_program_seq.sv     V_Sequence wrapper + mul_program container (mul_seq_pkg.sv); focus knobs incl. div/alu
 ├── tests/README_mul_tests.md        test definitions (MUL tests + risc_div_test / risc_alu_test)
+├── task_mul/                        MUL TASK DELIVERABLE (one of 5 team tasks - see its README):
+│                                    interface, mul_agent+monitor, MUL-only scoreboard (extracted),
+│                                    reference model + selftest, mul covergroups, mul_sva, sequences, tests
+├── task_mul_env/                    runnable MUL-only UVM environment (mul_demo_test) on mini_dut -
+│                                    run with tb/scripts/run_task_mul.sh (Verilator, PASS/FAIL)
 ├── mini/                            MINI environments (block-level, pre-integration): mini_dut.sv (negedge
 │                                    scenario driver + 3-instr simple program, no RTL), mini_tb.sv (UVM top),
 │                                    mini_plain_tb.sv (NO-UVM twin: same smoke checkers + VCD), cb_probe.sv
 ├── sim/smoke/                       Verilator smoke bench (tb_smoke, OBI memory models, mul/alu checker twins, directed program)
-└── scripts/                         rtl.f, tb_mul.f, slang_check.py, check_bind.py, rv32_asm.py, run_smoke.sh,
-                                     run_selftest.sh, run_mini_uvm.sh, run_mini_plain.sh, mini_uvm.f, mini_plain.f,
-                                     mini_group_mk.py, vcd_to_html.py, setup_tools.sh
+└── scripts/                         rtl.f, tb_mul.f, task_mul.f, slang_check.py, check_bind.py, rv32_asm.py, run_smoke.sh,
+                                     run_selftest.sh, run_mini_uvm.sh, run_mini_plain.sh, run_task_mul.sh,
+                                     sync_task_mul.sh, mini_uvm.f, mini_plain.f, mini_group_mk.py,
+                                     vcd_to_html.py, make_plain_bundle.sh, setup_tools.sh
 ```
 
 NOTE: the coverage directory is named `fcov/` on purpose - a directory literally named
